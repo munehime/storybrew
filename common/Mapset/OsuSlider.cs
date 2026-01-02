@@ -219,7 +219,7 @@ namespace StorybrewCommon.Mapset
             for (var i = 0; i < nodeCount; i++)
             {
                 var nodeStartTime = startTime + i * travelDuration;
-                var nodeControlPoint = beatmap.GetTimingPointAt((int)nodeStartTime);
+                var nodeControlPoint = beatmap.GetControlPointAt((int)nodeStartTime);
                 sliderNodes.Add(new OsuSliderNode()
                 {
                     Time = nodeStartTime,
