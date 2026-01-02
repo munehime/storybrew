@@ -7,7 +7,9 @@ namespace StorybrewCommon.Mapset
     public class OsuSpinner : OsuHitObject
     {
         public double endTime;
-        public override double EndTime => endTime;
+        public override double EndTime => endTime; 
+        
+        public override double SampleTime => EndTime;
 
         public static OsuSpinner Parse(Beatmap beatmap, string[] values, int x, int y, double startTime, HitObjectFlag flags, HitSoundAddition additions, ControlPoint timingPoint, ControlPoint controlPoint, SampleSet sampleSet, SampleSet additionsSampleSet, int customSampleSet, float volume)
         {

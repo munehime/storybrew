@@ -50,6 +50,7 @@
             }
         }
 
+        [Obsolete("Use AsSamplePoints")]
         public static void AsSliderNodes(this IEnumerable<OsuHitObject> hitobjects, Action<OsuSliderNode, OsuHitObject> action)
         {
             foreach (var hitobject in hitobjects)
@@ -82,6 +83,26 @@
                             CustomSampleSet = spinner.CustomSampleSet,
                             Volume = spinner.Volume,
                         }, hitobject);
+                        break;
+                }
+        }
+
+        public static void AsSamplePoints(this IEnumerable<OsuHitObject> hitobjects, Action<OsuSamplePoint, OsuHitObject> action)
+        {
+            foreach (var hitobject in hitobjects)
+                switch (hitobject)
+                {
+                    case OsuCircle:
+                        action(hitobject, hitobject);
+                        break;
+
+                    case OsuSlider slider:
+                        foreach (var node in slider.Nodes)
+                            action(node, hitobject);
+                        break;
+
+                    case OsuSpinner:
+                        action(hitobject, hitobject);
                         break;
                 }
         }

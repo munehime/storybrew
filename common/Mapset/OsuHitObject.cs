@@ -5,7 +5,7 @@ using System.Globalization;
 namespace StorybrewCommon.Mapset
 {
     [Serializable]
-    public class OsuHitObject
+    public class OsuHitObject : OsuSamplePoint
     {
         public static readonly Vector2 PlayfieldSize = new Vector2(512, 384);
         public static readonly Vector2 StoryboardSize = new Vector2(640, 480);
@@ -27,11 +27,13 @@ namespace StorybrewCommon.Mapset
         public virtual double EndTime => StartTime;
 
         public HitObjectFlag Flags;
-        public HitSoundAddition Additions;
-        public SampleSet SampleSet;
-        public SampleSet AdditionsSampleSet;
-        public int CustomSampleSet;
-        public float Volume;
+
+        public virtual double SampleTime => StartTime;
+        public HitSoundAddition Additions { get; set; }
+        public SampleSet SampleSet { get; set; }
+        public SampleSet AdditionsSampleSet { get; set; }
+        public int CustomSampleSet { get; set; }
+        public float Volume { get; set; }
         public string SamplePath;
 
         public int ComboIndex = 1;

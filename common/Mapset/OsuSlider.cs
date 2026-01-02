@@ -324,14 +324,15 @@ namespace StorybrewCommon.Mapset
     }
 
     [Serializable]
-    public class OsuSliderNode
+    public class OsuSliderNode : OsuSamplePoint
     {
         public double Time;
-        public HitSoundAddition Additions;
-        public SampleSet SampleSet;
-        public SampleSet AdditionsSampleSet;
-        public int CustomSampleSet;
-        public float Volume;
+        public double SampleTime => Time;
+        public HitSoundAddition Additions { get; set; }
+        public SampleSet SampleSet { get; set; }
+        public SampleSet AdditionsSampleSet { get; set; }
+        public int CustomSampleSet { get; set; }
+        public float Volume { get; set; }
     }
 
     [Serializable]
