@@ -17,8 +17,9 @@ namespace StorybrewEditor.Storyboarding
             var fullPath = Path.Combine(project.MapsetPath, AudioPath);
             try
             {
-                sample = project.AudioContainer.Get(fullPath);
-                if (sample == null)
+                if (File.Exists(fullPath))
+                    sample = project.AudioContainer.Get(fullPath);
+                else
                 {
                     fullPath = Path.Combine(project.ProjectAssetFolderPath, AudioPath);
                     sample = project.AudioContainer.Get(fullPath);
