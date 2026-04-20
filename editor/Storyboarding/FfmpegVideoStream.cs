@@ -82,10 +82,24 @@ namespace StorybrewEditor.Storyboarding
             // Persistent texture, filled per-frame via sharedBitmap.
             texture = Texture2d.Create(Color4.Black, $"menubgvideo:{Path.GetFileName(videoPath)}", width, height);
 
-            // scale={w}:{h} respects the chosen dimensions exactly. Aspect is
-            // preserved because we derived (w, h) from the source aspect above.
+            if (!spawnFfmpeg()) return;
+
+            readerThread = new Thread(readerLoop)
+            {
+                IsBackground = true,
+                Name = "FfmpegVideoStream reader"
+            };
+            readerThread.Start();
+        }
+
+        // Spawns one decode pass — no -stream_loop. The reader thread
+        // relaunches ffmpeg on EOF, which gives cleaner loop boundaries
+        // than -stream_loop -1 (which can clip the final frames on some
+        // containers/codecs).
+        private bool spawnFfmpeg()
+        {
             var args =
-                $"-loglevel quiet -re -stream_loop -1 -i \"{videoPath}\" " +
+                $"-loglevel quiet -re -i \"{videoPath}\" " +
                 $"-vf scale={width}:{height} " +
                 $"-f rawvideo -pix_fmt bgra pipe:1";
 
@@ -100,19 +114,13 @@ namespace StorybrewEditor.Storyboarding
                     UseShellExecute = false,
                     CreateNoWindow = true,
                 });
+                return process != null;
             }
             catch (Exception e)
             {
                 Trace.WriteLine($"FfmpegVideoStream: failed to start ffmpeg: {e.Message}");
-                return;
+                return false;
             }
-
-            readerThread = new Thread(readerLoop)
-            {
-                IsBackground = true,
-                Name = "FfmpegVideoStream reader"
-            };
-            readerThread.Start();
         }
 
         // Extracts the audio track to a cached WAV file, on demand. Safe to
@@ -169,33 +177,54 @@ namespace StorybrewEditor.Storyboarding
 
         private void readerLoop()
         {
-            try
+            var frameSize = readBuffer.Length;
+
+            while (!isDisposed)
             {
-                var stream = process.StandardOutput.BaseStream;
-                var frameSize = readBuffer.Length;
-
-                while (!isDisposed)
+                try
                 {
-                    int read = 0;
-                    while (read < frameSize)
-                    {
-                        if (isDisposed) return;
-                        int n = stream.Read(readBuffer, read, frameSize - read);
-                        if (n <= 0) return; // pipe closed or EOF (shouldn't happen with stream_loop)
-                        read += n;
-                    }
+                    var stream = process.StandardOutput.BaseStream;
+                    var hitEof = false;
 
-                    lock (bufferLock)
+                    while (!isDisposed && !hitEof)
                     {
-                        if (isDisposed) return;
-                        Buffer.BlockCopy(readBuffer, 0, sharedBuffer, 0, frameSize);
-                        hasFrame = true;
+                        int read = 0;
+                        while (read < frameSize)
+                        {
+                            if (isDisposed) return;
+                            int n = stream.Read(readBuffer, read, frameSize - read);
+                            if (n <= 0) { hitEof = true; break; }
+                            read += n;
+                        }
+
+                        if (read < frameSize) break; // partial final frame, treat as EOF
+
+                        lock (bufferLock)
+                        {
+                            if (isDisposed) return;
+                            Buffer.BlockCopy(readBuffer, 0, sharedBuffer, 0, frameSize);
+                            hasFrame = true;
+                        }
                     }
                 }
-            }
-            catch (Exception e)
-            {
-                Trace.WriteLine($"FfmpegVideoStream: reader thread error: {e.Message}");
+                catch (Exception e)
+                {
+                    Trace.WriteLine($"FfmpegVideoStream: reader thread error: {e.Message}");
+                }
+
+                // One pass finished (or errored) — clean up and relaunch so
+                // playback loops without the -stream_loop edge cases.
+                if (isDisposed) return;
+                try { process?.Kill(); } catch { }
+                try { process?.WaitForExit(200); } catch { }
+                try { process?.Dispose(); } catch { }
+                process = null;
+
+                if (!spawnFfmpeg())
+                {
+                    Trace.WriteLine("FfmpegVideoStream: relaunch failed, stopping playback");
+                    return;
+                }
             }
         }
 
