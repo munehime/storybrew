@@ -48,7 +48,9 @@ namespace StorybrewEditor.Storyboarding
         // The video is scaled to fit within (maxWidth × maxHeight) while
         // preserving its source aspect ratio. Display-side fitting (crop, pad,
         // etc.) is the caller's responsibility — typically via Sprite.ScaleMode.
-        public FfmpegVideoStream(string videoPath, int maxWidth = 960, int maxHeight = 540)
+        // Default cap is 1080p so ≤1080p sources are not downscaled at all,
+        // keeping the menu background crisp on most monitors.
+        public FfmpegVideoStream(string videoPath, int maxWidth = 1920, int maxHeight = 1080)
         {
             this.videoPath = videoPath;
             this.maxWidth = maxWidth;

@@ -5,6 +5,7 @@ using BrewLib.Graphics.Textures;
 using BrewLib.UserInterface;
 using BrewLib.Util;
 using OpenTK;
+using OpenTK.Input;
 using StorybrewEditor.Storyboarding;
 using StorybrewEditor.Util;
 using System;
@@ -28,8 +29,11 @@ namespace StorybrewEditor.ScreenLayers
 
         private LinearLayout bottomRightLayout;
         private Button audioButton;
+        private Button hideUiButton;
         private Button discordButton;
         private Button wikiButton;
+
+        private bool uiHidden;
 
         private LinearLayout bottomLayout;
         private Button updateButton;
@@ -97,6 +101,14 @@ namespace StorybrewEditor.ScreenLayers
                         AnchorFrom = BoxAlignment.Centre,
                         CanGrow = false,
                         Displayed = false,
+                    },
+                    hideUiButton = new Button(WidgetManager)
+                    {
+                        StyleName = "icon",
+                        Icon = IconFont.EyeSlash,
+                        Tooltip = "Hide UI\nShortcut: F10",
+                        AnchorFrom = BoxAlignment.Centre,
+                        CanGrow = false,
                     },
                     discordButton = new Button(WidgetManager)
                     {
@@ -169,6 +181,8 @@ namespace StorybrewEditor.ScreenLayers
                 Program.Settings.Save();
             };
 
+            hideUiButton.OnClick += (sender, e) => toggleUi();
+
             reloadBackground();
             Program.Settings.MenuBackgroundPath.OnValueChanged += menuBackgroundChanged;
             Program.Settings.MenuBackgroundAudioEnabled.OnValueChanged += audioEnabledChanged;
@@ -177,6 +191,25 @@ namespace StorybrewEditor.ScreenLayers
         }
 
         private void audioEnabledChanged(object sender, EventArgs e) => applyAudioState();
+
+        public override bool OnKeyDown(KeyboardKeyEventArgs e)
+        {
+            if (!e.IsRepeat && e.Key == Key.F10)
+            {
+                toggleUi();
+                return true;
+            }
+            return base.OnKeyDown(e);
+        }
+
+        private void toggleUi()
+        {
+            uiHidden = !uiHidden;
+
+            mainLayout.Displayed = !uiHidden;
+            bottomRightLayout.Displayed = !uiHidden;
+            bottomLayout.Displayed = !uiHidden;
+        }
 
         private void menuBackgroundChanged(object sender, EventArgs e) => reloadBackground();
 
