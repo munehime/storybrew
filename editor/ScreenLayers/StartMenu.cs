@@ -36,8 +36,7 @@ namespace StorybrewEditor.ScreenLayers
         private Texture2d backgroundTexture;
         private readonly Sprite backgroundSprite = new Sprite { ScaleMode = ScaleMode.Fill };
 
-        private VideoPreview backgroundVideo;
-        private DateTime videoStart;
+        private FfmpegVideoStream backgroundVideo;
         private static readonly string[] videoExtensions = { ".mp4", ".webm", ".mov", ".avi", ".mkv" };
 
         public override void Load()
@@ -173,11 +172,8 @@ namespace StorybrewEditor.ScreenLayers
                 var ext = Path.GetExtension(path).ToLowerInvariant();
                 if (videoExtensions.Contains(ext))
                 {
-                    var cacheFolder = Path.Combine(AppContext.BaseDirectory, "menubgcache");
-                    Directory.CreateDirectory(cacheFolder);
-                    backgroundVideo = new VideoPreview(cacheFolder);
-                    backgroundVideo.LoadVideo(path, 0, prefetchFps: 15);
-                    videoStart = DateTime.UtcNow;
+                    backgroundVideo = new FfmpegVideoStream(path);
+                    backgroundVideo.Start();
                 }
                 else
                 {
@@ -194,10 +190,7 @@ namespace StorybrewEditor.ScreenLayers
         {
             if (backgroundVideo != null)
             {
-                var elapsed = (DateTime.UtcNow - videoStart).TotalMilliseconds;
-                var duration = backgroundVideo.DurationMs;
-                var loopMs = duration > 0 ? elapsed % duration : elapsed;
-                var frame = backgroundVideo.GetFrameTexture(loopMs);
+                var frame = backgroundVideo.UpdateAndGetTexture();
                 if (frame != null)
                 {
                     backgroundSprite.Texture = frame;
