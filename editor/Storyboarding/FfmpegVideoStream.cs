@@ -7,6 +7,7 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace StorybrewEditor.Storyboarding
 {
@@ -38,6 +39,11 @@ namespace StorybrewEditor.Storyboarding
         public int Height => height;
         public Texture2d Texture => texture;
         public bool HasFrame => hasFrame;
+
+        private string audioFilePath;
+        private Task audioExtractTask;
+        public string AudioFilePath => audioFilePath;
+        public bool IsAudioReady => audioFilePath != null && File.Exists(audioFilePath);
 
         // The video is scaled to fit within (maxWidth × maxHeight) while
         // preserving its source aspect ratio. Display-side fitting (crop, pad,
@@ -105,6 +111,58 @@ namespace StorybrewEditor.Storyboarding
                 Name = "FfmpegVideoStream reader"
             };
             readerThread.Start();
+        }
+
+        // Extracts the audio track to a cached WAV file, on demand. Safe to
+        // call multiple times; the underlying task is started once.
+        public void EnsureAudioExtracted()
+        {
+            if (audioExtractTask != null || IsAudioReady) return;
+            if (!VideoPreview.FfmpegExists) return;
+
+            audioExtractTask = Task.Run(extractAudio);
+        }
+
+        private void extractAudio()
+        {
+            try
+            {
+                var cacheDir = Path.Combine(AppContext.BaseDirectory, "menubgcache");
+                Directory.CreateDirectory(cacheDir);
+
+                var safeName = Path.GetFileNameWithoutExtension(videoPath);
+                foreach (var c in Path.GetInvalidFileNameChars())
+                    safeName = safeName.Replace(c, '_');
+                var target = Path.Combine(cacheDir, $"audio_{safeName}.wav");
+
+                if (File.Exists(target))
+                {
+                    audioFilePath = target;
+                    return;
+                }
+
+                var proc = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = VideoPreview.FfmpegPath,
+                        Arguments = $"-loglevel quiet -i \"{videoPath}\" -vn -acodec pcm_s16le -y \"{target}\"",
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                    }
+                };
+                proc.Start();
+                proc.WaitForExit();
+
+                if (proc.ExitCode == 0 && File.Exists(target))
+                    audioFilePath = target;
+                else
+                    Trace.WriteLine($"FfmpegVideoStream: audio extraction failed (exit {proc.ExitCode})");
+            }
+            catch (Exception e)
+            {
+                Trace.WriteLine($"FfmpegVideoStream: audio extraction error: {e.Message}");
+            }
         }
 
         private void readerLoop()

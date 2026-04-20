@@ -1,4 +1,5 @@
-﻿using BrewLib.Graphics;
+﻿using BrewLib.Audio;
+using BrewLib.Graphics;
 using BrewLib.Graphics.Drawables;
 using BrewLib.Graphics.Textures;
 using BrewLib.UserInterface;
@@ -26,6 +27,7 @@ namespace StorybrewEditor.ScreenLayers
         private Button closeButton;
 
         private LinearLayout bottomRightLayout;
+        private Button audioButton;
         private Button discordButton;
         private Button wikiButton;
 
@@ -37,6 +39,7 @@ namespace StorybrewEditor.ScreenLayers
         private readonly Sprite backgroundSprite = new Sprite { ScaleMode = ScaleMode.Fill };
 
         private FfmpegVideoStream backgroundVideo;
+        private AudioStream backgroundAudio;
         private static readonly string[] videoExtensions = { ".mp4", ".webm", ".mov", ".avi", ".mkv" };
 
         public override void Load()
@@ -86,6 +89,15 @@ namespace StorybrewEditor.ScreenLayers
                 Fill = true,
                 Children = new Widget[]
                 {
+                    audioButton = new Button(WidgetManager)
+                    {
+                        StyleName = "icon",
+                        Icon = IconFont.VolumeOff,
+                        Tooltip = "Menu background audio (off)",
+                        AnchorFrom = BoxAlignment.Centre,
+                        CanGrow = false,
+                        Displayed = false,
+                    },
                     discordButton = new Button(WidgetManager)
                     {
                         StyleName = "small",
@@ -150,16 +162,28 @@ namespace StorybrewEditor.ScreenLayers
             preferencesButton.OnClick += (sender, e) => Manager.Add(new PreferencesMenu());
             closeButton.OnClick += (sender, e) => Exit();
 
+            audioButton.OnClick += (sender, e) =>
+            {
+                var enabled = !(bool)Program.Settings.MenuBackgroundAudioEnabled;
+                Program.Settings.MenuBackgroundAudioEnabled.Set(enabled);
+                Program.Settings.Save();
+            };
+
             reloadBackground();
             Program.Settings.MenuBackgroundPath.OnValueChanged += menuBackgroundChanged;
+            Program.Settings.MenuBackgroundAudioEnabled.OnValueChanged += audioEnabledChanged;
 
             checkLatestVersion();
         }
+
+        private void audioEnabledChanged(object sender, EventArgs e) => applyAudioState();
 
         private void menuBackgroundChanged(object sender, EventArgs e) => reloadBackground();
 
         private void reloadBackground()
         {
+            backgroundAudio?.Dispose();
+            backgroundAudio = null;
             backgroundTexture?.Dispose();
             backgroundTexture = null;
             backgroundSprite.Texture = null;
@@ -184,10 +208,64 @@ namespace StorybrewEditor.ScreenLayers
 
             var hasBackground = backgroundSprite.Texture != null || backgroundVideo != null;
             WidgetManager.Root.StyleName = hasBackground ? "" : "panel";
+
+            audioButton.Displayed = backgroundVideo != null;
+            updateAudioButtonIcon();
+            applyAudioState();
+        }
+
+        private void updateAudioButtonIcon()
+        {
+            var enabled = (bool)Program.Settings.MenuBackgroundAudioEnabled;
+            audioButton.Icon = enabled ? IconFont.VolumeUp : IconFont.VolumeOff;
+            audioButton.Tooltip = enabled ? "Menu background audio (on)" : "Menu background audio (off)";
+        }
+
+        private void applyAudioState()
+        {
+            updateAudioButtonIcon();
+
+            var wantAudio = (bool)Program.Settings.MenuBackgroundAudioEnabled && backgroundVideo != null;
+            if (!wantAudio)
+            {
+                backgroundAudio?.Dispose();
+                backgroundAudio = null;
+                return;
+            }
+
+            if (backgroundAudio != null) return;
+            backgroundVideo.EnsureAudioExtracted();
+            tryLoadBackgroundAudio();
+        }
+
+        private void tryLoadBackgroundAudio()
+        {
+            if (backgroundAudio != null || backgroundVideo == null) return;
+            if (!(bool)Program.Settings.MenuBackgroundAudioEnabled) return;
+            if (!backgroundVideo.IsAudioReady) return;
+
+            try
+            {
+                backgroundAudio = Program.AudioManager.LoadStream(backgroundVideo.AudioFilePath);
+                backgroundAudio.Loop = true;
+                backgroundAudio.Volume = 1f;
+                backgroundAudio.Playing = true;
+            }
+            catch (Exception e)
+            {
+                Trace.WriteLine($"Failed to load menu background audio: {e.Message}");
+            }
         }
 
         public override void Draw(DrawContext drawContext, double tween)
         {
+            // If audio was toggled on before the WAV finished extracting,
+            // pick it up the moment it's ready.
+            if (backgroundAudio == null
+                && (bool)Program.Settings.MenuBackgroundAudioEnabled
+                && backgroundVideo?.IsAudioReady == true)
+                tryLoadBackgroundAudio();
+
             if (backgroundVideo != null)
             {
                 var frame = backgroundVideo.UpdateAndGetTexture();
@@ -212,6 +290,9 @@ namespace StorybrewEditor.ScreenLayers
             if (disposing)
             {
                 Program.Settings.MenuBackgroundPath.OnValueChanged -= menuBackgroundChanged;
+                Program.Settings.MenuBackgroundAudioEnabled.OnValueChanged -= audioEnabledChanged;
+                backgroundAudio?.Dispose();
+                backgroundAudio = null;
                 backgroundTexture?.Dispose();
                 backgroundTexture = null;
                 backgroundVideo?.Dispose();
