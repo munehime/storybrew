@@ -1064,7 +1064,9 @@ namespace StorybrewEditor.ScreenLayers
                 var screenshotsPath = Path.Combine(project.ProjectFolderPath, "screenshots");
                 Directory.CreateDirectory(screenshotsPath);
                 var filename = $"storybrew_{DateTime.Now:yyyyMMdd-HHmmss}.png";
-                bitmap.Save(Path.Combine(screenshotsPath, filename), System.Drawing.Imaging.ImageFormat.Png);
+                var fullPath = Path.Combine(screenshotsPath, filename);
+                bitmap.Save(fullPath, System.Drawing.Imaging.ImageFormat.Png);
+                Program.Schedule(() => Manager.ShowMessage($"Screenshot saved to:\n{fullPath}"));
             }
             bitmap.Dispose();
         }
