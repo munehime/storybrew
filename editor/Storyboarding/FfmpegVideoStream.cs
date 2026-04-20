@@ -17,8 +17,10 @@ namespace StorybrewEditor.Storyboarding
     public class FfmpegVideoStream : IDisposable
     {
         private readonly string videoPath;
-        private readonly int width;
-        private readonly int height;
+        private readonly int maxWidth;
+        private readonly int maxHeight;
+        private int width;
+        private int height;
 
         private Process process;
         private Thread readerThread;
@@ -37,11 +39,14 @@ namespace StorybrewEditor.Storyboarding
         public Texture2d Texture => texture;
         public bool HasFrame => hasFrame;
 
-        public FfmpegVideoStream(string videoPath, int width = 960, int height = 540)
+        // The video is scaled to fit within (maxWidth × maxHeight) while
+        // preserving its source aspect ratio. Display-side fitting (crop, pad,
+        // etc.) is the caller's responsibility — typically via Sprite.ScaleMode.
+        public FfmpegVideoStream(string videoPath, int maxWidth = 960, int maxHeight = 540)
         {
             this.videoPath = videoPath;
-            this.width = width;
-            this.height = height;
+            this.maxWidth = maxWidth;
+            this.maxHeight = maxHeight;
         }
 
         public void Start()
@@ -57,6 +62,9 @@ namespace StorybrewEditor.Storyboarding
                 return;
             }
 
+            var (srcW, srcH) = probeDimensions(videoPath);
+            (width, height) = fitInBox(srcW, srcH, maxWidth, maxHeight);
+
             var frameSize = width * height * 4;
             sharedBuffer = new byte[frameSize];
             readBuffer = new byte[frameSize];
@@ -66,9 +74,11 @@ namespace StorybrewEditor.Storyboarding
             // Persistent texture, filled per-frame via sharedBitmap.
             texture = Texture2d.Create(Color4.Black, $"menubgvideo:{Path.GetFileName(videoPath)}", width, height);
 
+            // scale={w}:{h} respects the chosen dimensions exactly. Aspect is
+            // preserved because we derived (w, h) from the source aspect above.
             var args =
                 $"-loglevel quiet -re -stream_loop -1 -i \"{videoPath}\" " +
-                $"-vf scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height} " +
+                $"-vf scale={width}:{height} " +
                 $"-f rawvideo -pix_fmt bgra pipe:1";
 
             try
@@ -141,6 +151,55 @@ namespace StorybrewEditor.Storyboarding
                 texture.Update(sharedBitmap, 0, 0, null);
             }
             return texture;
+        }
+
+        private static (int w, int h) probeDimensions(string videoPath)
+        {
+            if (!File.Exists(VideoPreview.FfprobePath)) return (0, 0);
+
+            try
+            {
+                var proc = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = VideoPreview.FfprobePath,
+                        Arguments = $"-v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 \"{videoPath}\"",
+                        RedirectStandardOutput = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                    }
+                };
+                proc.Start();
+                var output = proc.StandardOutput.ReadToEnd();
+                proc.WaitForExit();
+
+                var parts = output.Trim().Split(',');
+                if (parts.Length == 2
+                    && int.TryParse(parts[0], out var w)
+                    && int.TryParse(parts[1], out var h)
+                    && w > 0 && h > 0)
+                    return (w, h);
+            }
+            catch (Exception e)
+            {
+                Trace.WriteLine($"FfmpegVideoStream: ffprobe failed: {e.Message}");
+            }
+            return (0, 0);
+        }
+
+        private static (int w, int h) fitInBox(int srcW, int srcH, int maxW, int maxH)
+        {
+            // Fall back to the box itself if probing failed.
+            if (srcW <= 0 || srcH <= 0) return (maxW, maxH);
+
+            // Always downscale to fit; never upscale (wastes bandwidth for no gain).
+            double scale = Math.Min((double)maxW / srcW, (double)maxH / srcH);
+            int w = scale < 1 ? (int)Math.Round(srcW * scale) : srcW;
+            int h = scale < 1 ? (int)Math.Round(srcH * scale) : srcH;
+
+            // Some codecs / ffmpeg filters require even dimensions.
+            return (Math.Max(2, w & ~1), Math.Max(2, h & ~1));
         }
 
         public void Dispose()
