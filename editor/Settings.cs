@@ -21,6 +21,9 @@ namespace StorybrewEditor
         public readonly Setting<bool> VerboseVsCode = new Setting<bool>(false);
         public readonly Setting<int> EffectThreads = new Setting<int>(0);
         public readonly Setting<string> TimeCopyFormat = new Setting<string>(@"h\:mm\:ss\.ff");
+        public readonly Setting<bool> ShowVideoPreview = new Setting<bool>(true);
+        public readonly Setting<string> WindowSize = new Setting<string>("1366x768");
+        public readonly Setting<bool> FullscreenBorderless = new Setting<bool>(false);
 
         private readonly string path;
 

@@ -106,6 +106,7 @@ namespace StorybrewEditor.Storyboarding
 
             reloadTextures();
             reloadAudio();
+            reloadVideo();
 
             ScriptsPath = Path.GetDirectoryName(projectPath);
             if (withCommonScripts)
@@ -158,6 +159,8 @@ namespace StorybrewEditor.Storyboarding
 
         public TextureContainer TextureContainer { get; private set; }
         public AudioSampleContainer AudioContainer { get; private set; }
+        public VideoPreview VideoPreview { get; private set; }
+        public VideoLayer VideoLayer { get; private set; }
 
         public FrameStats FrameStats { get; private set; } = new FrameStats();
 
@@ -171,6 +174,7 @@ namespace StorybrewEditor.Storyboarding
             effectUpdateQueue.Enabled = allowEffectUpdates && MapsetPathIsValid;
 
             var newFrameStats = updateFrameStats ? new FrameStats() : null;
+            VideoLayer?.Draw(drawContext, camera, bounds, opacity, DisplayTime, this);
             LayerManager.Draw(drawContext, camera, bounds, opacity, newFrameStats);
             FrameStats = newFrameStats ?? FrameStats;
         }
@@ -185,6 +189,15 @@ namespace StorybrewEditor.Storyboarding
         {
             AudioContainer?.Dispose();
             AudioContainer = new AudioSampleContainer(Program.AudioManager, null);
+        }
+
+        private void reloadVideo()
+        {
+            VideoPreview?.Dispose();
+            VideoLayer?.Dispose();
+            VideoPreview = new VideoPreview(ProjectFolderPath);
+            VideoPreview.Enabled = Program.Settings.ShowVideoPreview;
+            VideoLayer = new VideoLayer(VideoPreview);
         }
 
         #endregion
@@ -414,6 +427,8 @@ namespace StorybrewEditor.Storyboarding
                 reloadTextures();
             else if (extension == ".wav" || extension == ".mp3" || extension == ".ogg")
                 reloadAudio();
+            else if (extension == ".mp4" || extension == ".mov" || extension == ".avi" || extension == ".webm" || extension == ".mkv")
+                reloadVideo();
             else if (extension == ".osu")
                 refreshMapset();
         }
@@ -889,6 +904,8 @@ namespace StorybrewEditor.Storyboarding
 
             string osuPath = null, osbPath = null;
             List<EditorStoryboardLayer> localLayers = null;
+            string videoFilename = null;
+            int videoOffset = 0;
             Program.RunMainThread(() =>
             {
                 osuPath = MainBeatmap.Path;
@@ -899,6 +916,12 @@ namespace StorybrewEditor.Storyboarding
                 OwnsOsb = true;
 
                 localLayers = new List<EditorStoryboardLayer>(LayerManager.FindLayers(l => l.Visible));
+
+                if (VideoPreview?.HasVideo == true)
+                {
+                    videoFilename = Path.GetFileName(VideoPreview.VideoPath);
+                    videoOffset = (int)VideoPreview.Offset;
+                }
             });
 
             var stopwatch = Stopwatch.StartNew();
@@ -962,6 +985,8 @@ namespace StorybrewEditor.Storyboarding
                 {
                     writer.WriteLine("[Events]");
                     writer.WriteLine("//Background and Video events");
+                    if (videoFilename != null)
+                        writer.WriteLine($"Video,{videoOffset},\"{videoFilename}\"");
                     foreach (var osbLayer in OsbLayers)
                     {
                         if (osbLayer == OsbLayer.Overlay && !usesOverlayLayer)
@@ -1014,6 +1039,8 @@ namespace StorybrewEditor.Storyboarding
                     scriptManager.Dispose();
                     TextureContainer.Dispose();
                     AudioContainer.Dispose();
+                    VideoPreview?.Dispose();
+                    VideoLayer?.Dispose();
                 }
                 assetWatcher = null;
                 MapsetManager = null;
@@ -1021,6 +1048,8 @@ namespace StorybrewEditor.Storyboarding
                 scriptManager = null;
                 TextureContainer = null;
                 AudioContainer = null;
+                VideoPreview = null;
+                VideoLayer = null;
                 IsDisposed = true;
             }
         }

@@ -1,8 +1,10 @@
 ﻿using BrewLib.Audio;
+using BrewLib.Graphics;
 using BrewLib.Time;
 using BrewLib.UserInterface;
 using BrewLib.Util;
 using OpenTK;
+using OpenTK.Graphics.OpenGL;
 using OpenTK.Input;
 using StorybrewCommon.Mapset;
 using StorybrewEditor.Storyboarding;
@@ -12,6 +14,7 @@ using StorybrewEditor.UserInterface.Drawables;
 using StorybrewEditor.Util;
 using System;
 using System.Diagnostics;
+using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -51,6 +54,27 @@ namespace StorybrewEditor.ScreenLayers
         private Button settingsButton;
         private Button effectsButton;
         private Button layersButton;
+        private Button hideUiButton;
+        private Button screenshotButton;
+        private Button exportVideoButton;
+
+        private bool isExportingVideo;
+        private Process videoExportFfmpeg;
+        private double videoExportStartTime;
+        private double videoExportCurrentTime;
+        private double videoExportEndTime;
+        private string videoExportOutputPath;
+        private bool videoExportEffectsWasDisplayed;
+        private bool videoExportLayersWasDisplayed;
+        private bool videoExportSettingsWasDisplayed;
+        private bool videoExportEffectConfigWasDisplayed;
+
+        private bool uiHidden = false;
+        private bool effectConfigWasDisplayed = false;
+        private bool wasPrefetchingVideo = false;
+        private long lastStoryboardClickTicks = 0;
+        private bool pendingScreenshot = false;
+        private bool pendingScreenshotSave = false;
 
         private EffectList effectsList;
         private LayerList layersList;
@@ -168,16 +192,19 @@ namespace StorybrewEditor.ScreenLayers
                     {
                         StyleName = "small",
                         Text = "Effects",
+                        CanGrow = false,
                     },
                     layersButton = new Button(WidgetManager)
                     {
                         StyleName = "small",
                         Text = "Layers",
+                        CanGrow = false,
                     },
                     settingsButton = new Button(WidgetManager)
                     {
                         StyleName = "small",
                         Text = "Settings",
+                        CanGrow = false,
                     },
                     projectFolderButton = new Button(WidgetManager)
                     {
@@ -203,11 +230,35 @@ namespace StorybrewEditor.ScreenLayers
                         AnchorFrom = BoxAlignment.Centre,
                         CanGrow = false,
                     },
+                    hideUiButton = new Button(WidgetManager)
+                    {
+                        StyleName = "icon",
+                        Icon = IconFont.EyeSlash,
+                        Tooltip = "Hide UI\nShortcut: F10",
+                        AnchorFrom = BoxAlignment.Centre,
+                        CanGrow = false,
+                    },
+                    screenshotButton = new Button(WidgetManager)
+                    {
+                        StyleName = "icon",
+                        Icon = IconFont.Camera,
+                        Tooltip = "Screenshot\nF12: save + clipboard\nShift+F12: clipboard only",
+                        AnchorFrom = BoxAlignment.Centre,
+                        CanGrow = false,
+                    },
                     exportButton = new Button(WidgetManager)
                     {
                         StyleName = "icon",
                         Icon = IconFont.PuzzlePiece,
                         Tooltip = "Export to .osb\n(Right click to export once for each diff)",
+                        AnchorFrom = BoxAlignment.Centre,
+                        CanGrow = false,
+                    },
+                    exportVideoButton = new Button(WidgetManager)
+                    {
+                        StyleName = "icon",
+                        Icon = IconFont.Film,
+                        Tooltip = "Export storyboard to MP4 video",
                         AnchorFrom = BoxAlignment.Centre,
                         CanGrow = false,
                     },
@@ -308,6 +359,9 @@ namespace StorybrewEditor.ScreenLayers
                 Size = new Vector2(16, 9) * 16,
             });
 
+            hideUiButton.OnClick += (sender, e) => hideUi();
+            screenshotButton.OnClick += (sender, e) => scheduleScreenshot(save: true);
+            
             timeButton.OnClick += (sender, e) => Manager.ShowPrompt("Skip to...", value =>
             {
                 if (float.TryParse(value, out float time))
@@ -384,6 +438,7 @@ namespace StorybrewEditor.ScreenLayers
                     exportProjectAll();
                 else exportProject();
             };
+            exportVideoButton.OnClick += (sender, e) => exportVideo();
 
             project.OnMapsetPathChanged += project_OnMapsetPathChanged;
             project.OnEffectsContentChanged += project_OnEffectsContentChanged;
@@ -391,6 +446,18 @@ namespace StorybrewEditor.ScreenLayers
 
             if (!project.MapsetPathIsValid)
                 Manager.ShowMessage($"The mapset folder cannot be found.\n{project.MapsetPath}\n\nPlease select a new one.", () => changeMapsetFolder(), true);
+        }
+
+        public override bool OnClickDown(MouseButtonEventArgs e)
+        {
+            if (uiHidden && e.Button == MouseButton.Left)
+            {
+                long now = DateTime.UtcNow.Ticks;
+                if (now - lastStoryboardClickTicks < 5000000L)
+                    showUi();
+                lastStoryboardClickTicks = now;
+            }
+            return base.OnClickDown(e);
         }
 
         public override bool OnKeyDown(KeyboardKeyEventArgs e)
@@ -419,6 +486,16 @@ namespace StorybrewEditor.ScreenLayers
             {
                 switch (e.Key)
                 {
+                    case Key.F10:
+                        toggleUi();
+                        return true;
+                    case Key.F11:
+                        Program.Settings.FullscreenBorderless.Set(!Program.Settings.FullscreenBorderless);
+                        Program.Settings.Save();
+                        return true;
+                    case Key.F12:
+                        scheduleScreenshot(save: !e.Shift);
+                        return true;
                     case Key.Space:
                         playPauseButton.Click();
                         return true;
@@ -486,6 +563,102 @@ namespace StorybrewEditor.ScreenLayers
         private void exportProject()
             => Manager.AsyncLoading("Exporting", () => project.ExportToOsb());
 
+        private void exportVideo()
+        {
+            if (!VideoPreview.FfmpegExists)
+            {
+                Manager.ShowMessage($"ffmpeg.exe not found.\nPlease place ffmpeg.exe and ffprobe.exe in:\n{VideoPreview.FfmpegExeDir}");
+                return;
+            }
+            videoExportStartTime = project.StartTime / 1000.0;
+            videoExportEndTime = project.EndTime / 1000.0;
+            if (videoExportEndTime <= videoExportStartTime) { Manager.ShowMessage("No storyboard content to export."); return; }
+
+            var exportsFolder = Path.Combine(project.ProjectFolderPath, "exports");
+            Directory.CreateDirectory(exportsFolder);
+            videoExportOutputPath = Path.Combine(exportsFolder, $"storybrew_{DateTime.Now:yyyyMMdd-HHmmss}.mp4");
+
+            var audioPath = project.AudioPath;
+            var hasAudio = audioPath != null && File.Exists(audioPath);
+            var audioSeek = Math.Max(0.0, videoExportStartTime);
+            var audioDelay = Math.Max(0.0, -videoExportStartTime);
+            var audioArgs = hasAudio
+                ? $"-itsoffset {audioDelay:F3} -ss {audioSeek:F3} -i \"{audioPath}\""
+                : "";
+            var mapArgs = hasAudio ? "-map 0:v -map 1:a" : "";
+
+            videoExportFfmpeg = new System.Diagnostics.Process
+            {
+                StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = VideoPreview.FfmpegPath,
+                    Arguments = $"-y -f image2pipe -vcodec png -r 60 -i - {audioArgs} {mapArgs} -c:v libx264 -pix_fmt yuv420p -shortest \"{videoExportOutputPath}\"",
+                    RedirectStandardInput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                }
+            };
+            try { videoExportFfmpeg.Start(); }
+            catch (Exception e) { Manager.ShowMessage($"Failed to start ffmpeg:\n{e.Message}"); videoExportFfmpeg = null; return; }
+
+            videoExportCurrentTime = videoExportStartTime;
+            videoExportEffectsWasDisplayed = effectsList.Displayed;
+            videoExportLayersWasDisplayed = layersList.Displayed;
+            videoExportSettingsWasDisplayed = settingsMenu.Displayed;
+            videoExportEffectConfigWasDisplayed = effectConfigUi.Displayed;
+            timeSource.Playing = false;
+            isExportingVideo = true;
+        }
+
+        private void finalizeVideoExport(bool success)
+        {
+            isExportingVideo = false;
+            var proc = videoExportFfmpeg;
+            var outPath = videoExportOutputPath;
+            videoExportFfmpeg = null;
+
+            if (!uiHidden)
+            {
+                bottomLeftLayout.Displayed = true;
+                bottomRightLayout.Displayed = true;
+                effectsList.Displayed = videoExportEffectsWasDisplayed;
+                layersList.Displayed = videoExportLayersWasDisplayed;
+                settingsMenu.Displayed = videoExportSettingsWasDisplayed;
+                effectConfigUi.Displayed = videoExportEffectConfigWasDisplayed;
+                updateStatusLayout();
+            }
+
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                try { proc.StandardInput.BaseStream.Close(); proc.WaitForExit(); proc.Dispose(); }
+                catch (Exception e) { Trace.WriteLine($"Video export finalize: {e.Message}"); }
+                if (success) Program.Schedule(() => Manager.ShowMessage($"Video exported to:\n{outPath}"));
+            });
+        }
+
+        private Bitmap captureStoryboardBitmap()
+        {
+            var editor = Manager.GetContext<Editor>();
+            var winW = editor.Window.Width;
+            var winH = editor.Window.Height;
+            var full = new Bitmap(winW, winH, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            var d = full.LockBits(new Rectangle(0, 0, winW, winH), System.Drawing.Imaging.ImageLockMode.WriteOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            GL.ReadPixels(0, 0, winW, winH, OpenTK.Graphics.OpenGL.PixelFormat.Bgra, OpenTK.Graphics.OpenGL.PixelType.UnsignedByte, d.Scan0);
+            full.UnlockBits(d);
+            full.RotateFlip(RotateFlipType.RotateNoneFlipY);
+
+            if (winW == 1920 && winH == 1080) return full;
+
+            var result = new Bitmap(1920, 1080, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (var g = System.Drawing.Graphics.FromImage(result))
+            {
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                g.DrawImage(full, 0, 0, 1920, 1080);
+            }
+            full.Dispose();
+            return result;
+        }
+
         private void exportProjectAll()
         {
             Manager.AsyncLoading("Exporting", () =>
@@ -534,7 +707,8 @@ namespace StorybrewEditor.ScreenLayers
             changeMapButton.Disabled = project.MapsetManager.BeatmapCount < 2;
             playPauseButton.Icon = timeSource.Playing ? IconFont.Pause : IconFont.Play;
             saveButton.Disabled = !project.Changed;
-            exportButton.Disabled = !project.MapsetPathIsValid;
+            exportButton.Disabled = !project.MapsetPathIsValid || isExportingVideo;
+            exportVideoButton.Disabled = !project.MapsetPathIsValid || isExportingVideo;
             audio.Volume = WidgetManager.Root.Opacity;
 
             if (timeSource.Playing)
@@ -555,10 +729,26 @@ namespace StorybrewEditor.ScreenLayers
                     $"{storyboardPosition.X:000}, {storyboardPosition.Y:000}" :
                     $"{(time < 0 ? "-" : "")}{(int)Math.Abs(time / 60):00}:{(int)Math.Abs(time % 60):00}:{(int)Math.Abs(time * 1000) % 1000:000}";
 
-                warningsLabel.Text = buildWarningMessage();
-                warningsLabel.Displayed = warningsLabel.Text.Length > 0;
-                warningsLabel.Pack(width: 600);
-                warningsLabel.Pack();
+                if (!uiHidden)
+                {
+                    warningsLabel.Text = buildWarningMessage();
+                    warningsLabel.Displayed = warningsLabel.Text.Length > 0;
+                    warningsLabel.Pack(width: 600);
+                    warningsLabel.Pack();
+
+                    var videoPreview = project.VideoPreview;
+                    var isPrefetching = videoPreview?.IsPrefetching == true;
+                    if (isPrefetching && !isExportingVideo)
+                    {
+                        statusIcon.Icon = IconFont.Film;
+                        statusMessage.Text = $"Caching video... {videoPreview.PrefetchProgress:P0}";
+                        statusLayout.Pack(1024 - bottomRightLayout.Width - 24);
+                        statusLayout.Displayed = true;
+                    }
+                    else if (wasPrefetchingVideo && !isExportingVideo)
+                        updateStatusLayout();
+                    wasPrefetchingVideo = isPrefetching;
+                }
             }
 
             if (timeSource.Playing && mainStoryboardDrawable.Time < time)
@@ -623,7 +813,7 @@ namespace StorybrewEditor.ScreenLayers
         {
             base.Resize(width, height);
 
-            bottomRightLayout.Pack(374);
+            bottomRightLayout.Pack(440);
             bottomLeftLayout.Pack(WidgetManager.Size.X - bottomRightLayout.Width);
 
             settingsMenu.Pack(bottomRightLayout.Width - 24, WidgetManager.Root.Height - bottomRightLayout.Height - 16);
@@ -706,8 +896,11 @@ namespace StorybrewEditor.ScreenLayers
             resizeTimeline();
         }
 
-        private void project_OnEffectsStatusChanged(object sender, EventArgs e)
+        private void project_OnEffectsStatusChanged(object sender, EventArgs e) => updateStatusLayout();
+
+        private void updateStatusLayout()
         {
+            if (uiHidden) return;
             switch (project.EffectsStatus)
             {
                 case EffectStatus.ExecutionFailed:
@@ -726,6 +919,147 @@ namespace StorybrewEditor.ScreenLayers
                     statusLayout.Displayed = false;
                     break;
             }
+        }
+
+        private void hideUi()
+        {
+            effectConfigWasDisplayed = effectConfigUi.Displayed;
+            uiHidden = true;
+            bottomLeftLayout.Displayed = false;
+            bottomRightLayout.Displayed = false;
+            effectsList.Displayed = false;
+            layersList.Displayed = false;
+            settingsMenu.Displayed = false;
+            effectConfigUi.Displayed = false;
+            statusLayout.Displayed = false;
+            warningsLabel.Displayed = false;
+            previewContainer.Displayed = false;
+        }
+
+        private void showUi()
+        {
+            uiHidden = false;
+            bottomLeftLayout.Displayed = true;
+            bottomRightLayout.Displayed = true;
+            effectsList.Displayed = effectsButton.Checked;
+            layersList.Displayed = layersButton.Checked;
+            settingsMenu.Displayed = settingsButton.Checked;
+            effectConfigUi.Displayed = effectConfigWasDisplayed;
+            updateStatusLayout();
+        }
+
+        private void toggleUi()
+        {
+            if (uiHidden) showUi();
+            else hideUi();
+        }
+
+        public override void Draw(DrawContext drawContext, double tween)
+        {
+            if (isExportingVideo)
+            {
+                bottomLeftLayout.Displayed = false;
+                bottomRightLayout.Displayed = false;
+                effectsList.Displayed = false;
+                layersList.Displayed = false;
+                settingsMenu.Displayed = false;
+                effectConfigUi.Displayed = false;
+                statusLayout.Displayed = false;
+                warningsLabel.Displayed = false;
+                previewContainer.Displayed = false;
+
+                mainStoryboardDrawable.Time = videoExportCurrentTime;
+                base.Draw(drawContext, tween);
+
+                var frame = captureStoryboardBitmap();
+                try { frame.Save(videoExportFfmpeg.StandardInput.BaseStream, System.Drawing.Imaging.ImageFormat.Png); }
+                catch (Exception ex) { Trace.WriteLine($"Video export write failed: {ex.Message}"); finalizeVideoExport(false); return; }
+                finally { frame.Dispose(); }
+
+                videoExportCurrentTime += 1.0 / 60.0;
+
+                var elapsed = videoExportCurrentTime - videoExportStartTime;
+                var total = videoExportEndTime - videoExportStartTime;
+                var progress = elapsed / Math.Max(0.001, total);
+                statusMessage.Text = $"Exporting video... {Math.Min(progress, 1):P0}  ({(int)(elapsed / 60):00}:{(int)(elapsed % 60):00}:{(int)(elapsed * 1000) % 1000:000} / {(int)(total / 60):00}:{(int)(total % 60):00}:{(int)(total * 1000) % 1000:000})";
+                statusLayout.Pack(1024 - bottomRightLayout.Width - 24);
+                statusLayout.Displayed = true;
+                GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+                base.Draw(drawContext, tween);
+
+                if (videoExportCurrentTime >= videoExportEndTime)
+                    finalizeVideoExport(true);
+                return;
+            }
+
+            if (pendingScreenshot)
+            {
+                pendingScreenshot = false;
+                var save = pendingScreenshotSave;
+                var effectConfigDisplayed = effectConfigUi.Displayed;
+
+                bottomLeftLayout.Displayed = false;
+                bottomRightLayout.Displayed = false;
+                effectsList.Displayed = false;
+                layersList.Displayed = false;
+                settingsMenu.Displayed = false;
+                effectConfigUi.Displayed = false;
+                statusLayout.Displayed = false;
+                warningsLabel.Displayed = false;
+                previewContainer.Displayed = false;
+
+                base.Draw(drawContext, tween);
+                var bitmap = captureGlBuffer();
+
+                if (!uiHidden)
+                {
+                    bottomLeftLayout.Displayed = true;
+                    bottomRightLayout.Displayed = true;
+                    effectsList.Displayed = effectsButton.Checked;
+                    layersList.Displayed = layersButton.Checked;
+                    settingsMenu.Displayed = settingsButton.Checked;
+                    effectConfigUi.Displayed = effectConfigDisplayed;
+                    updateStatusLayout();
+                    GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+                    base.Draw(drawContext, tween);
+                }
+
+                processScreenshot(bitmap, save);
+                return;
+            }
+            base.Draw(drawContext, tween);
+        }
+
+        private void scheduleScreenshot(bool save)
+        {
+            pendingScreenshot = true;
+            pendingScreenshotSave = save;
+        }
+
+        private Bitmap captureGlBuffer()
+        {
+            var editor = Manager.GetContext<Editor>();
+            var width = editor.Window.Width;
+            var height = editor.Window.Height;
+            var bitmap = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            var data = bitmap.LockBits(new Rectangle(0, 0, width, height), System.Drawing.Imaging.ImageLockMode.WriteOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            GL.ReadPixels(0, 0, width, height, PixelFormat.Bgra, PixelType.UnsignedByte, data.Scan0);
+            bitmap.UnlockBits(data);
+            bitmap.RotateFlip(RotateFlipType.RotateNoneFlipY);
+            return bitmap;
+        }
+
+        private void processScreenshot(Bitmap bitmap, bool save)
+        {
+            System.Windows.Forms.Clipboard.SetImage(bitmap);
+            if (save)
+            {
+                var screenshotsPath = Path.Combine(project.ProjectFolderPath, "screenshots");
+                Directory.CreateDirectory(screenshotsPath);
+                var filename = $"storybrew_{DateTime.Now:yyyyMMdd-HHmmss}.png";
+                bitmap.Save(Path.Combine(screenshotsPath, filename), System.Drawing.Imaging.ImageFormat.Png);
+            }
+            bitmap.Dispose();
         }
 
         #region IDisposable Support

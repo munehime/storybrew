@@ -86,23 +86,68 @@ namespace StorybrewEditor
             var displayDevice = findDisplayDevice();
 
             using (var window = createWindow(displayDevice))
-            using (AudioManager = createAudioManager(window))
-            using (var editor = new Editor(window))
             {
-                Trace.WriteLine($"{getOSVersion()} / {window.WindowInfo}");
-                Trace.WriteLine($"graphics mode: {window.Context.GraphicsMode}");
+                Settings.WindowSize.OnValueChanged += (sender, e) => resizeWindow(window);
+                Settings.FullscreenBorderless.OnValueChanged += (sender, e) => applyFullscreenSetting(window);
 
-                window.Icon = new Icon(typeof(Program), "icon.ico");
-                window.Resize += (sender, e) =>
+                using (AudioManager = createAudioManager(window))
+                using (var editor = new Editor(window))
                 {
-                    editor.Draw(1);
-                    window.SwapBuffers();
-                };
+                    Trace.WriteLine($"{getOSVersion()} / {window.WindowInfo}");
+                    Trace.WriteLine($"graphics mode: {window.Context.GraphicsMode}");
 
-                editor.Initialize();
-                runMainLoop(window, editor, 1.0 / Settings.UpdateRate, 1.0 / (Settings.FrameRate > 0 ? Settings.FrameRate : displayDevice.RefreshRate));
+                    window.Icon = new Icon(typeof(Program), "icon.ico");
+                    window.Resize += (sender, e) =>
+                    {
+                        editor.Draw(1);
+                        window.SwapBuffers();
+                    };
 
-                Settings.Save();
+                    editor.Initialize();
+                    runMainLoop(window, editor, 1.0 / Settings.UpdateRate, 1.0 / (Settings.FrameRate > 0 ? Settings.FrameRate : displayDevice.RefreshRate));
+
+                    Settings.Save();
+                }
+            }
+        }
+
+        private static (int width, int height) parseWindowSize(string sizeStr)
+        {
+            var parts = sizeStr.Split('x');
+            if (parts.Length == 2 && int.TryParse(parts[0], out int w) && int.TryParse(parts[1], out int h))
+                return (w, h);
+            return (1366, 768);
+        }
+
+        private static void resizeWindow(GameWindow window)
+        {
+            if (Settings.FullscreenBorderless) return;
+            var (w, h) = parseWindowSize(Settings.WindowSize);
+            var screenArea = Screen.PrimaryScreen.WorkingArea;
+            window.WindowState = WindowState.Normal;
+            window.WindowBorder = WindowBorder.Resizable;
+            window.ClientSize = new Size(w, h);
+            window.Location = new Point(
+                (int)(screenArea.Left + (screenArea.Width - window.Size.Width) * 0.5f),
+                (int)(screenArea.Top + (screenArea.Height - window.Size.Height) * 0.5f)
+            );
+        }
+
+        private static void applyFullscreenSetting(GameWindow window)
+        {
+            if (Settings.FullscreenBorderless)
+            {
+                var bounds = Screen.PrimaryScreen.Bounds;
+                window.WindowBorder = WindowBorder.Hidden;
+                window.WindowState = WindowState.Normal;
+                window.Location = new Point(bounds.X, bounds.Y);
+                window.ClientSize = new Size(bounds.Width, bounds.Height);
+            }
+            else
+            {
+                window.WindowState = WindowState.Normal;
+                window.WindowBorder = WindowBorder.Resizable;
+                resizeWindow(window);
             }
         }
 
@@ -153,7 +198,8 @@ namespace StorybrewEditor
 #endif
             var primaryScreenArea = Screen.PrimaryScreen.WorkingArea;
 
-            int windowWidth = 1366, windowHeight = 768;
+            var (targetWidth, targetHeight) = parseWindowSize(Settings.WindowSize);
+            int windowWidth = targetWidth, windowHeight = targetHeight;
             if (windowHeight >= primaryScreenArea.Height)
             {
                 windowWidth = 1024;
@@ -163,15 +209,26 @@ namespace StorybrewEditor
             var window = new GameWindow(windowWidth, windowHeight, graphicsMode, Name, GameWindowFlags.Default, displayDevice, 2, 0, contextFlags);
             Trace.WriteLine($"Window dpi scale: {window.Height / (float)windowHeight}");
 
-            window.Location = new Point(
-                (int)(primaryScreenArea.Left + (primaryScreenArea.Width - window.Size.Width) * 0.5f),
-                (int)(primaryScreenArea.Top + (primaryScreenArea.Height - window.Size.Height) * 0.5f)
-            );
-            if (window.Location.X < 0 || window.Location.Y < 0)
+            if (Settings.FullscreenBorderless)
             {
-                window.Location = primaryScreenArea.Location;
-                window.Size = primaryScreenArea.Size;
-                window.WindowState = WindowState.Maximized;
+                var bounds = Screen.PrimaryScreen.Bounds;
+                window.WindowBorder = WindowBorder.Hidden;
+                window.WindowState = WindowState.Normal;
+                window.Location = new Point(bounds.X, bounds.Y);
+                window.ClientSize = new Size(bounds.Width, bounds.Height);
+            }
+            else
+            {
+                window.Location = new Point(
+                    (int)(primaryScreenArea.Left + (primaryScreenArea.Width - window.Size.Width) * 0.5f),
+                    (int)(primaryScreenArea.Top + (primaryScreenArea.Height - window.Size.Height) * 0.5f)
+                );
+                if (window.Location.X < 0 || window.Location.Y < 0)
+                {
+                    window.Location = primaryScreenArea.Location;
+                    window.Size = primaryScreenArea.Size;
+                    window.WindowState = WindowState.Maximized;
+                }
             }
 
             return window;

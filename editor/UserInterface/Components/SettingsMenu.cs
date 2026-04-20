@@ -3,6 +3,7 @@ using BrewLib.Util;
 using OpenTK;
 using StorybrewEditor.ScreenLayers;
 using StorybrewEditor.Storyboarding;
+using System;
 using System.Diagnostics;
 
 namespace StorybrewEditor.UserInterface.Components
@@ -20,7 +21,8 @@ namespace StorybrewEditor.UserInterface.Components
         {
             this.project = project;
 
-            Button referencedAssemblyButton, floatingPointTimeButton, helpButton;
+            Button referencedAssemblyButton, floatingPointTimeButton, showVideoPreviewButton, helpButton;
+            Button size1366Button, size1600Button, size1920Button, fullscreenBorderlessButton;
             Label dimLabel;
             Slider dimSlider;
 
@@ -86,13 +88,67 @@ namespace StorybrewEditor.UserInterface.Components
                                 Checked = project.ExportSettings.UseFloatForTime,
                                 Tooltip = "A storyboard exported with this option enabled\nwill only be compatible with lazer",
                             },
+                            showVideoPreviewButton = new Button(manager)
+                            {
+                                Text = "Show Video Preview",
+                                AnchorFrom = BoxAlignment.Centre,
+                                AnchorTo = BoxAlignment.Centre,
+                                Checkable = true,
+                                Checked = Program.Settings.ShowVideoPreview,
+                                Tooltip = "Show/hide the video background in the editor preview\nThe video is still exported to .osb regardless",
+                            },
+                            new Label(manager)
+                            {
+                                StyleName = "small",
+                                Text = "Window Size",
+                                CanGrow = false,
+                            },
+                            new LinearLayout(manager)
+                            {
+                                StyleName = "condensed",
+                                Horizontal = true,
+                                FitChildren = true,
+                                CanGrow = false,
+                                Children = new Widget[]
+                                {
+                                    size1366Button = new Button(manager)
+                                    {
+                                        StyleName = "small",
+                                        Text = "1366\u00d7768",
+                                        AnchorFrom = BoxAlignment.Centre,
+                                        AnchorTo = BoxAlignment.Centre,
+                                    },
+                                    size1600Button = new Button(manager)
+                                    {
+                                        StyleName = "small",
+                                        Text = "1600\u00d7900",
+                                        AnchorFrom = BoxAlignment.Centre,
+                                        AnchorTo = BoxAlignment.Centre,
+                                    },
+                                    size1920Button = new Button(manager)
+                                    {
+                                        StyleName = "small",
+                                        Text = "1920\u00d71080",
+                                        AnchorFrom = BoxAlignment.Centre,
+                                        AnchorTo = BoxAlignment.Centre,
+                                    },
+                                }
+                            },
+                            fullscreenBorderlessButton = new Button(manager)
+                            {
+                                Text = "Fullscreen Borderless",
+                                Tooltip = "Toggle borderless fullscreen\nShortcut: F11",
+                                AnchorFrom = BoxAlignment.Centre,
+                                AnchorTo = BoxAlignment.Centre,
+                                Checkable = true,
+                            },
                         }
                     }
                 },
             });
 
-            helpButton.OnClick += (sender, e) => Process.Start(new ProcessStartInfo() 
-            { 
+            helpButton.OnClick += (sender, e) => Process.Start(new ProcessStartInfo()
+            {
                 FileName = $"https://github.com/{Program.Repository}/wiki",
                 UseShellExecute = true
             });
@@ -103,6 +159,52 @@ namespace StorybrewEditor.UserInterface.Components
                 dimLabel.Text = $"Dim ({project.DimFactor:p})";
             };
             floatingPointTimeButton.OnValueChanged += (sender, e) => project.ExportSettings.UseFloatForTime = floatingPointTimeButton.Checked;
+            showVideoPreviewButton.OnValueChanged += (sender, e) =>
+            {
+                Program.Settings.ShowVideoPreview.Set(showVideoPreviewButton.Checked);
+                if (project.VideoPreview != null)
+                    project.VideoPreview.Enabled = showVideoPreviewButton.Checked;
+                Program.Settings.Save();
+            };
+
+            Action updateWindowSizeButtons = () =>
+            {
+                string size = Program.Settings.WindowSize;
+                bool isFullscreen = Program.Settings.FullscreenBorderless;
+                size1366Button.Checked = !isFullscreen && size == "1366x768";
+                size1600Button.Checked = !isFullscreen && size == "1600x900";
+                size1920Button.Checked = !isFullscreen && size == "1920x1080";
+                fullscreenBorderlessButton.Checked = isFullscreen;
+            };
+
+            size1366Button.OnClick += (sender, e) =>
+            {
+                Program.Settings.WindowSize.Set("1366x768");
+                Program.Settings.FullscreenBorderless.Set(false);
+                Program.Settings.Save();
+                updateWindowSizeButtons();
+            };
+            size1600Button.OnClick += (sender, e) =>
+            {
+                Program.Settings.WindowSize.Set("1600x900");
+                Program.Settings.FullscreenBorderless.Set(false);
+                Program.Settings.Save();
+                updateWindowSizeButtons();
+            };
+            size1920Button.OnClick += (sender, e) =>
+            {
+                Program.Settings.WindowSize.Set("1920x1080");
+                Program.Settings.FullscreenBorderless.Set(false);
+                Program.Settings.Save();
+                updateWindowSizeButtons();
+            };
+            fullscreenBorderlessButton.OnValueChanged += (sender, e) =>
+            {
+                Program.Settings.FullscreenBorderless.Set(fullscreenBorderlessButton.Checked);
+                Program.Settings.Save();
+                updateWindowSizeButtons();
+            };
+            updateWindowSizeButtons();
         }
 
         protected override void Dispose(bool disposing)

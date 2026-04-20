@@ -41,6 +41,8 @@ namespace StorybrewCommon.Scripting
         /// </summary>
         public StoryboardLayer GetLayer(string identifier) => context.GetLayer(identifier);
 
+        public void SetVideo(string path, double offset = 0) => context.SetVideo(path, offset);
+
         public Beatmap Beatmap => context.Beatmap;
         public Beatmap GetBeatmap(string name)
             => context.Beatmaps.FirstOrDefault(b => b.Name == name);

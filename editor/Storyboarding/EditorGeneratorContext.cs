@@ -94,6 +94,21 @@ namespace StorybrewEditor.Storyboarding
         public override void AppendLog(string message)
             => log.AppendLine(message);
 
+        public override void SetVideo(string path, double offset)
+        {
+            var assetPath = Path.GetFullPath(Path.Combine(effect.Project.ProjectAssetFolderPath, path));
+            if (File.Exists(assetPath))
+            {
+                Program.Schedule(() => effect.Project.VideoPreview?.LoadVideo(assetPath, offset));
+                return;
+            }
+            var mapsetPath = effect.Project.MapsetPathIsValid
+                ? Path.GetFullPath(Path.Combine(effect.Project.MapsetPath, path))
+                : null;
+            var fullPath = mapsetPath != null && File.Exists(mapsetPath) ? mapsetPath : assetPath;
+            Program.Schedule(() => effect.Project.VideoPreview?.LoadVideo(fullPath, offset));
+        }
+
         #region Audio data
 
         private Dictionary<string, FftStream> fftAudioStreams = new Dictionary<string, FftStream>();
