@@ -167,6 +167,8 @@ namespace StorybrewEditor.ScreenLayers
                 backgroundTexture = Texture2d.Load(path);
                 backgroundSprite.Texture = backgroundTexture;
             }
+
+            WidgetManager.Root.StyleName = backgroundSprite.Texture != null ? "" : "panel";
         }
 
         public override void Draw(DrawContext drawContext, double tween)
