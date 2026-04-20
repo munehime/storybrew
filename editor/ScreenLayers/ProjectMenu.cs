@@ -76,6 +76,9 @@ namespace StorybrewEditor.ScreenLayers
         private bool pendingScreenshot = false;
         private bool pendingScreenshotSave = false;
 
+        private static readonly Process currentProcess = Process.GetCurrentProcess();
+        private static readonly double totalSystemMemoryGb = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 1024.0 / 1024.0 / 1024.0;
+
         private EffectList effectsList;
         private LayerList layersList;
         private SettingsMenu settingsMenu;
@@ -800,6 +803,10 @@ namespace StorybrewEditor.ScreenLayers
             var totalGpuMemory = project.TextureContainer.UncompressedMemoryUseMb;
             if (totalGpuMemory >= 256)
                 warnings += $"⚠ {totalGpuMemory:0.0}MB Texture Mem. (Total)\n";
+
+            var processMemoryGb = currentProcess.WorkingSet64 / 1024.0 / 1024.0 / 1024.0;
+            if (processMemoryGb >= totalSystemMemoryGb * 0.8)
+                warnings += $"⚠ {processMemoryGb:0.1}GB Process Memory (Max Cap: {totalSystemMemoryGb:0.0}GB)\n";
 
             if (project.FrameStats.OverlappedCommands)
             {
