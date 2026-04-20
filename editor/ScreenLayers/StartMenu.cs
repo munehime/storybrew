@@ -44,6 +44,7 @@ namespace StorybrewEditor.ScreenLayers
 
         private FfmpegVideoStream backgroundVideo;
         private AudioStream backgroundAudio;
+        private DateTime videoStartTime;
         private static readonly string[] videoExtensions = { ".mp4", ".webm", ".mov", ".avi", ".mkv" };
 
         public override void Load()
@@ -231,6 +232,7 @@ namespace StorybrewEditor.ScreenLayers
                 {
                     backgroundVideo = new FfmpegVideoStream(path);
                     backgroundVideo.Start();
+                    videoStartTime = DateTime.UtcNow;
                 }
                 else
                 {
@@ -282,6 +284,17 @@ namespace StorybrewEditor.ScreenLayers
                 backgroundAudio = Program.AudioManager.LoadStream(backgroundVideo.AudioFilePath);
                 backgroundAudio.Loop = true;
                 backgroundAudio.Volume = 1f;
+
+                // Seek to where the video currently is in its loop so audio
+                // starts roughly aligned with the on-screen frame instead of
+                // jumping back to 0:00 each time the user toggles audio on.
+                var duration = backgroundAudio.Duration;
+                if (duration > 0)
+                {
+                    var elapsed = (DateTime.UtcNow - videoStartTime).TotalSeconds;
+                    backgroundAudio.Time = elapsed % duration;
+                }
+
                 backgroundAudio.Playing = true;
             }
             catch (Exception e)
