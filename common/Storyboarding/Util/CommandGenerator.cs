@@ -1,5 +1,4 @@
 ﻿
-#if DEBUG
 using OpenTK;
 using StorybrewCommon.Animations;
 using StorybrewCommon.Mapset;
@@ -249,4 +248,3 @@ namespace StorybrewCommon.Storyboarding.Util
         }
     }
 }
-#endif

@@ -1,4 +1,3 @@
-﻿#if DEBUG
 using OpenTK;
 using StorybrewCommon.Storyboarding.CommandValues;
 
@@ -20,4 +19,3 @@ namespace StorybrewCommon.Storyboarding3d
         }
     }
 }
-#endif

@@ -1,4 +1,3 @@
-﻿#if DEBUG
 using StorybrewCommon.Mapset;
 using StorybrewCommon.Storyboarding;
 using StorybrewCommon.Storyboarding.Commands;
@@ -39,4 +38,3 @@ namespace StorybrewCommon.Storyboarding3d
         }
     }
 }
-#endif
