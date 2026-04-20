@@ -304,6 +304,10 @@ namespace StorybrewEditor.ScreenLayers
                 var frame = backgroundVideo.UpdateAndGetTexture();
                 if (frame != null)
                 {
+                    // Video: letterbox so the whole frame is visible at its
+                    // native aspect (no edge cropping). Black bars fill any
+                    // mismatch with the window aspect.
+                    backgroundSprite.ScaleMode = ScaleMode.Fit;
                     backgroundSprite.Texture = frame;
                     backgroundSprite.Draw(drawContext, WidgetManager.Camera,
                         new Box2(0, 0, WidgetManager.Size.X, WidgetManager.Size.Y),
@@ -312,9 +316,13 @@ namespace StorybrewEditor.ScreenLayers
                 }
             }
             else if (backgroundSprite.Texture != null)
+            {
+                // Image: cover the whole window, cropping if aspect differs.
+                backgroundSprite.ScaleMode = ScaleMode.Fill;
                 backgroundSprite.Draw(drawContext, WidgetManager.Camera,
                     new Box2(0, 0, WidgetManager.Size.X, WidgetManager.Size.Y),
                     (float)TransitionProgress);
+            }
             base.Draw(drawContext, tween);
         }
 
