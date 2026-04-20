@@ -24,6 +24,7 @@ namespace StorybrewEditor
         public readonly Setting<bool> ShowVideoPreview = new Setting<bool>(true);
         public readonly Setting<string> WindowSize = new Setting<string>("1366x768");
         public readonly Setting<bool> FullscreenBorderless = new Setting<bool>(false);
+        public readonly Setting<string> MenuBackgroundPath = new Setting<string>("");
 
         private readonly string path;
 

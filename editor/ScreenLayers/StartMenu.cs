@@ -1,5 +1,9 @@
-﻿using BrewLib.UserInterface;
+﻿using BrewLib.Graphics;
+using BrewLib.Graphics.Drawables;
+using BrewLib.Graphics.Textures;
+using BrewLib.UserInterface;
 using BrewLib.Util;
+using OpenTK;
 using StorybrewEditor.Storyboarding;
 using StorybrewEditor.Util;
 using System;
@@ -29,6 +33,9 @@ namespace StorybrewEditor.ScreenLayers
         private Button updateButton;
         private Label versionLabel;
 
+        private Texture2d backgroundTexture;
+        private readonly Sprite backgroundSprite = new Sprite { ScaleMode = ScaleMode.Fill };
+
         public override void Load()
         {
             base.Load();
@@ -57,7 +64,6 @@ namespace StorybrewEditor.ScreenLayers
                     {
                         Text = "Preferences",
                         AnchorFrom = BoxAlignment.Centre,
-                        Disabled = true,
                     },
                     closeButton = new Button(WidgetManager)
                     {
@@ -138,8 +144,49 @@ namespace StorybrewEditor.ScreenLayers
                 UseShellExecute = true
             });
             discordButton.OnClick += (sender, e) => Process.Start(new ProcessStartInfo() { FileName = Program.DiscordUrl, UseShellExecute = true });
+            preferencesButton.OnClick += (sender, e) => Manager.Add(new PreferencesMenu());
             closeButton.OnClick += (sender, e) => Exit();
+
+            reloadBackground();
+            Program.Settings.MenuBackgroundPath.OnValueChanged += menuBackgroundChanged;
+
             checkLatestVersion();
+        }
+
+        private void menuBackgroundChanged(object sender, EventArgs e) => reloadBackground();
+
+        private void reloadBackground()
+        {
+            backgroundTexture?.Dispose();
+            backgroundTexture = null;
+            backgroundSprite.Texture = null;
+
+            var path = (string)Program.Settings.MenuBackgroundPath;
+            if (!string.IsNullOrEmpty(path) && File.Exists(path))
+            {
+                backgroundTexture = Texture2d.Load(path);
+                backgroundSprite.Texture = backgroundTexture;
+            }
+        }
+
+        public override void Draw(DrawContext drawContext, double tween)
+        {
+            if (backgroundSprite.Texture != null)
+                backgroundSprite.Draw(drawContext, WidgetManager.Camera,
+                    new Box2(0, 0, WidgetManager.Size.X, WidgetManager.Size.Y),
+                    (float)TransitionProgress);
+            base.Draw(drawContext, tween);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                Program.Settings.MenuBackgroundPath.OnValueChanged -= menuBackgroundChanged;
+                backgroundTexture?.Dispose();
+                backgroundTexture = null;
+            }
+            base.Dispose(disposing);
         }
 
         public override void Resize(int width, int height)
