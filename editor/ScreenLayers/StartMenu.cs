@@ -176,7 +176,7 @@ namespace StorybrewEditor.ScreenLayers
                     var cacheFolder = Path.Combine(AppContext.BaseDirectory, "menubgcache");
                     Directory.CreateDirectory(cacheFolder);
                     backgroundVideo = new VideoPreview(cacheFolder);
-                    backgroundVideo.LoadVideo(path, 0);
+                    backgroundVideo.LoadVideo(path, 0, prefetchFps: 15);
                     videoStart = DateTime.UtcNow;
                 }
                 else

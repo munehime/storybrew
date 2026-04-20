@@ -1,5 +1,6 @@
 using BrewLib.UserInterface;
 using BrewLib.Util;
+using System;
 using System.IO;
 
 namespace StorybrewEditor.ScreenLayers
@@ -75,15 +76,24 @@ namespace StorybrewEditor.ScreenLayers
         private void updateLabel()
         {
             var path = (string)Program.Settings.MenuBackgroundPath;
-            currentLabel.Text = string.IsNullOrEmpty(path)
-                ? "Current: (none)"
-                : $"Current: {Path.GetFileName(path)}";
+            if (string.IsNullOrEmpty(path))
+            {
+                currentLabel.Text = "Current: (none)";
+                return;
+            }
+
+            var name = Path.GetFileName(path);
+            if (name.Length > 60)
+                name = name.Substring(0, 28) + "..." + name.Substring(name.Length - 29);
+            currentLabel.Text = $"Current: {name}";
         }
 
         public override void Resize(int width, int height)
         {
             base.Resize(width, height);
-            box.Pack(360, 0);
+            // Grow up to ~2/3 of screen width but not smaller than 420px
+            var maxWidth = Math.Max(420, (int)(WidgetManager.Size.X * 0.66f));
+            box.Pack(420, 0, maxWidth, 0);
         }
     }
 }
