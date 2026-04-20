@@ -36,6 +36,10 @@ namespace StorybrewEditor.ScreenLayers
         private Texture2d backgroundTexture;
         private readonly Sprite backgroundSprite = new Sprite { ScaleMode = ScaleMode.Fill };
 
+        private VideoPreview backgroundVideo;
+        private DateTime videoStart;
+        private static readonly string[] videoExtensions = { ".mp4", ".webm", ".mov", ".avi", ".mkv" };
+
         public override void Load()
         {
             base.Load();
@@ -160,20 +164,50 @@ namespace StorybrewEditor.ScreenLayers
             backgroundTexture?.Dispose();
             backgroundTexture = null;
             backgroundSprite.Texture = null;
+            backgroundVideo?.Dispose();
+            backgroundVideo = null;
 
             var path = (string)Program.Settings.MenuBackgroundPath;
             if (!string.IsNullOrEmpty(path) && File.Exists(path))
             {
-                backgroundTexture = Texture2d.Load(path);
-                backgroundSprite.Texture = backgroundTexture;
+                var ext = Path.GetExtension(path).ToLowerInvariant();
+                if (videoExtensions.Contains(ext))
+                {
+                    var cacheFolder = Path.Combine(AppContext.BaseDirectory, "menubgcache");
+                    Directory.CreateDirectory(cacheFolder);
+                    backgroundVideo = new VideoPreview(cacheFolder);
+                    backgroundVideo.LoadVideo(path, 0);
+                    videoStart = DateTime.UtcNow;
+                }
+                else
+                {
+                    backgroundTexture = Texture2d.Load(path);
+                    backgroundSprite.Texture = backgroundTexture;
+                }
             }
 
-            WidgetManager.Root.StyleName = backgroundSprite.Texture != null ? "" : "panel";
+            var hasBackground = backgroundSprite.Texture != null || backgroundVideo != null;
+            WidgetManager.Root.StyleName = hasBackground ? "" : "panel";
         }
 
         public override void Draw(DrawContext drawContext, double tween)
         {
-            if (backgroundSprite.Texture != null)
+            if (backgroundVideo != null)
+            {
+                var elapsed = (DateTime.UtcNow - videoStart).TotalMilliseconds;
+                var duration = backgroundVideo.DurationMs;
+                var loopMs = duration > 0 ? elapsed % duration : elapsed;
+                var frame = backgroundVideo.GetFrameTexture(loopMs);
+                if (frame != null)
+                {
+                    backgroundSprite.Texture = frame;
+                    backgroundSprite.Draw(drawContext, WidgetManager.Camera,
+                        new Box2(0, 0, WidgetManager.Size.X, WidgetManager.Size.Y),
+                        (float)TransitionProgress);
+                    backgroundSprite.Texture = null;
+                }
+            }
+            else if (backgroundSprite.Texture != null)
                 backgroundSprite.Draw(drawContext, WidgetManager.Camera,
                     new Box2(0, 0, WidgetManager.Size.X, WidgetManager.Size.Y),
                     (float)TransitionProgress);
@@ -187,6 +221,8 @@ namespace StorybrewEditor.ScreenLayers
                 Program.Settings.MenuBackgroundPath.OnValueChanged -= menuBackgroundChanged;
                 backgroundTexture?.Dispose();
                 backgroundTexture = null;
+                backgroundVideo?.Dispose();
+                backgroundVideo = null;
             }
             base.Dispose(disposing);
         }

@@ -38,6 +38,7 @@ namespace StorybrewEditor.Storyboarding
         public bool HasVideo => videoPath != null;
         public string VideoPath => videoPath;
         public double Offset => offset;
+        public double DurationMs => durationMs;
         public bool IsPrefetching => _isPrefetching;
         public float PrefetchProgress => _prefetchProgress;
         public bool Enabled
