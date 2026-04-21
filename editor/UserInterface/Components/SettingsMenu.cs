@@ -105,8 +105,8 @@ namespace StorybrewEditor.UserInterface.Components
                             },
                             new LinearLayout(manager)
                             {
-                                StyleName = "condensed",
                                 Horizontal = true,
+                                Fill = true,
                                 FitChildren = true,
                                 CanGrow = false,
                                 Children = new Widget[]
