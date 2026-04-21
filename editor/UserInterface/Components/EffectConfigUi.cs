@@ -26,6 +26,12 @@ namespace StorybrewEditor.UserInterface.Components
         public override Vector2 MaxSize => layout.MaxSize;
         public override Vector2 PreferredSize => layout.PreferredSize;
 
+        public SlidingPanel Panel { get; set; }
+        public bool IsShown => Panel?.IsShown ?? Displayed;
+        public void Show() { if (Panel != null) Panel.Show(); else Displayed = true; }
+        public void Hide() { if (Panel != null) Panel.Hide(); else Displayed = false; }
+        public void SetShown(bool shown) { if (Panel != null) Panel.SetShown(shown); else Displayed = shown; }
+
         private Effect effect;
         public Effect Effect
         {
@@ -115,7 +121,7 @@ namespace StorybrewEditor.UserInterface.Components
             closeButton.OnClick += (sender, e) =>
             {
                 Effect = null;
-                Displayed = false;
+                Hide();
             };
         }
 

@@ -85,6 +85,11 @@ namespace StorybrewEditor.ScreenLayers
 
         private EffectConfigUi effectConfigUi;
 
+        private SlidingPanel effectsListPanel;
+        private SlidingPanel layersListPanel;
+        private SlidingPanel settingsMenuPanel;
+        private SlidingPanel effectConfigPanel;
+
         private AudioStream audio;
         private TimeSourceExtender timeSource;
         private double? pendingSeek;
@@ -276,7 +281,10 @@ namespace StorybrewEditor.ScreenLayers
                 Offset = new Vector2(16, 16),
                 Displayed = false,
             });
-            effectConfigUi.OnDisplayedChanged += (sender, e) => resizeStoryboard();
+            effectConfigPanel = new SlidingPanel(effectConfigUi, SlidingPanel.Side.Left);
+            effectConfigUi.Panel = effectConfigPanel;
+            effectConfigPanel.OnShownChanged += (sender, e) => resizeStoryboard();
+            RegisterSlidingPanel(effectConfigPanel);
 
             WidgetManager.Root.Add(effectsList = new EffectList(WidgetManager, project, effectConfigUi)
             {
@@ -292,6 +300,8 @@ namespace StorybrewEditor.ScreenLayers
                 else timeline.ClearHighlight();
             };
             effectsList.OnEffectSelected += effect => timeline.Value = (float)effect.StartTime / 1000;
+            effectsListPanel = new SlidingPanel(effectsList, SlidingPanel.Side.Right);
+            RegisterSlidingPanel(effectsListPanel);
 
             WidgetManager.Root.Add(layersList = new LayerList(WidgetManager, project.LayerManager)
             {
@@ -307,6 +317,8 @@ namespace StorybrewEditor.ScreenLayers
                 else timeline.ClearHighlight();
             };
             layersList.OnLayerSelected += layer => timeline.Value = (float)layer.StartTime / 1000;
+            layersListPanel = new SlidingPanel(layersList, SlidingPanel.Side.Right);
+            RegisterSlidingPanel(layersListPanel);
 
             WidgetManager.Root.Add(settingsMenu = new SettingsMenu(WidgetManager, project)
             {
@@ -315,6 +327,8 @@ namespace StorybrewEditor.ScreenLayers
                 AnchorTo = BoxAlignment.TopRight,
                 Offset = new Vector2(-16, 0),
             });
+            settingsMenuPanel = new SlidingPanel(settingsMenu, SlidingPanel.Side.Right);
+            RegisterSlidingPanel(settingsMenuPanel);
 
             WidgetManager.Root.Add(statusLayout = new LinearLayout(WidgetManager)
             {
@@ -420,7 +434,7 @@ namespace StorybrewEditor.ScreenLayers
 
             MakeTabs(
                 new Button[] { settingsButton, effectsButton, layersButton },
-                new Widget[] { settingsMenu, effectsList, layersList });
+                new SlidingPanel[] { settingsMenuPanel, effectsListPanel, layersListPanel });
             projectFolderButton.OnClick += (sender, e) =>
             {
                 var path = Path.GetFullPath(project.ProjectFolderPath);
@@ -605,10 +619,10 @@ namespace StorybrewEditor.ScreenLayers
             catch (Exception e) { Manager.ShowMessage($"Failed to start ffmpeg:\n{e.Message}"); videoExportFfmpeg = null; return; }
 
             videoExportCurrentTime = videoExportStartTime;
-            videoExportEffectsWasDisplayed = effectsList.Displayed;
-            videoExportLayersWasDisplayed = layersList.Displayed;
-            videoExportSettingsWasDisplayed = settingsMenu.Displayed;
-            videoExportEffectConfigWasDisplayed = effectConfigUi.Displayed;
+            videoExportEffectsWasDisplayed = effectsListPanel.IsShown;
+            videoExportLayersWasDisplayed = layersListPanel.IsShown;
+            videoExportSettingsWasDisplayed = settingsMenuPanel.IsShown;
+            videoExportEffectConfigWasDisplayed = effectConfigPanel.IsShown;
             timeSource.Playing = false;
             isExportingVideo = true;
         }
@@ -624,10 +638,10 @@ namespace StorybrewEditor.ScreenLayers
             {
                 bottomLeftLayout.Displayed = true;
                 bottomRightLayout.Displayed = true;
-                effectsList.Displayed = videoExportEffectsWasDisplayed;
-                layersList.Displayed = videoExportLayersWasDisplayed;
-                settingsMenu.Displayed = videoExportSettingsWasDisplayed;
-                effectConfigUi.Displayed = videoExportEffectConfigWasDisplayed;
+                effectsListPanel.SetShown(videoExportEffectsWasDisplayed);
+                layersListPanel.SetShown(videoExportLayersWasDisplayed);
+                settingsMenuPanel.SetShown(videoExportSettingsWasDisplayed);
+                effectConfigPanel.SetShown(videoExportEffectConfigWasDisplayed);
                 updateStatusLayout();
             }
 
@@ -841,7 +855,7 @@ namespace StorybrewEditor.ScreenLayers
         private void resizeStoryboard()
         {
             var parentSize = WidgetManager.Size;
-            if (effectConfigUi.Displayed)
+            if (effectConfigPanel?.IsShown ?? effectConfigUi.Displayed)
             {
                 mainStoryboardContainer.Offset = new Vector2(effectConfigUi.Bounds.Right / 2, 0);
                 parentSize.X -= effectConfigUi.Bounds.Right;
@@ -937,14 +951,14 @@ namespace StorybrewEditor.ScreenLayers
 
         private void hideUi()
         {
-            effectConfigWasDisplayed = effectConfigUi.Displayed;
+            effectConfigWasDisplayed = effectConfigPanel.IsShown;
             uiHidden = true;
             bottomLeftLayout.Displayed = false;
             bottomRightLayout.Displayed = false;
-            effectsList.Displayed = false;
-            layersList.Displayed = false;
-            settingsMenu.Displayed = false;
-            effectConfigUi.Displayed = false;
+            effectsListPanel.Hide();
+            layersListPanel.Hide();
+            settingsMenuPanel.Hide();
+            effectConfigPanel.Hide();
             statusLayout.Displayed = false;
             warningsLabel.Displayed = false;
             previewContainer.Displayed = false;
@@ -955,10 +969,10 @@ namespace StorybrewEditor.ScreenLayers
             uiHidden = false;
             bottomLeftLayout.Displayed = true;
             bottomRightLayout.Displayed = true;
-            effectsList.Displayed = effectsButton.Checked;
-            layersList.Displayed = layersButton.Checked;
-            settingsMenu.Displayed = settingsButton.Checked;
-            effectConfigUi.Displayed = effectConfigWasDisplayed;
+            effectsListPanel.SetShown(effectsButton.Checked);
+            layersListPanel.SetShown(layersButton.Checked);
+            settingsMenuPanel.SetShown(settingsButton.Checked);
+            effectConfigPanel.SetShown(effectConfigWasDisplayed);
             updateStatusLayout();
         }
 
@@ -974,10 +988,10 @@ namespace StorybrewEditor.ScreenLayers
             {
                 bottomLeftLayout.Displayed = false;
                 bottomRightLayout.Displayed = false;
-                effectsList.Displayed = false;
-                layersList.Displayed = false;
-                settingsMenu.Displayed = false;
-                effectConfigUi.Displayed = false;
+                effectsListPanel.ForceHide();
+                layersListPanel.ForceHide();
+                settingsMenuPanel.ForceHide();
+                effectConfigPanel.ForceHide();
                 statusLayout.Displayed = false;
                 warningsLabel.Displayed = false;
                 previewContainer.Displayed = false;
@@ -1010,14 +1024,14 @@ namespace StorybrewEditor.ScreenLayers
             {
                 pendingScreenshot = false;
                 var save = pendingScreenshotSave;
-                var effectConfigDisplayed = effectConfigUi.Displayed;
+                var effectConfigDisplayed = effectConfigPanel.IsShown;
 
                 bottomLeftLayout.Displayed = false;
                 bottomRightLayout.Displayed = false;
-                effectsList.Displayed = false;
-                layersList.Displayed = false;
-                settingsMenu.Displayed = false;
-                effectConfigUi.Displayed = false;
+                effectsListPanel.ForceHide();
+                layersListPanel.ForceHide();
+                settingsMenuPanel.ForceHide();
+                effectConfigPanel.ForceHide();
                 statusLayout.Displayed = false;
                 warningsLabel.Displayed = false;
                 previewContainer.Displayed = false;
@@ -1029,10 +1043,10 @@ namespace StorybrewEditor.ScreenLayers
                 {
                     bottomLeftLayout.Displayed = true;
                     bottomRightLayout.Displayed = true;
-                    effectsList.Displayed = effectsButton.Checked;
-                    layersList.Displayed = layersButton.Checked;
-                    settingsMenu.Displayed = settingsButton.Checked;
-                    effectConfigUi.Displayed = effectConfigDisplayed;
+                    if (effectsButton.Checked) effectsListPanel.ForceShow();
+                    if (layersButton.Checked) layersListPanel.ForceShow();
+                    if (settingsButton.Checked) settingsMenuPanel.ForceShow();
+                    if (effectConfigDisplayed) effectConfigPanel.ForceShow();
                     updateStatusLayout();
                     GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
                     base.Draw(drawContext, tween);
