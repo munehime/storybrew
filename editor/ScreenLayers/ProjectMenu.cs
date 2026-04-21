@@ -920,25 +920,11 @@ namespace StorybrewEditor.ScreenLayers
             var rightHeight = WidgetManager.Root.Height - bottomRightLayout.Height - 16;
             var leftHeight = WidgetManager.Root.Height - bottomLeftLayout.Height - 16;
 
-            // Pack(w,h,w,h) forces exact size (width acts as min, maxWidth clamps). Pack also
-            // self-recurses when PreferredSize shifts post-layout (e.g. labels re-wrapping
-            // after their Size changes), which gives the layout tree an extra RefreshAnchors
-            // pass to converge. After extreme shrink-then-expand, labels that wrapped to
-            // many lines when MaxSize was tiny need multiple cascades (label re-measure →
-            // labels-layout re-distribute → row re-distribute → effectsLayout re-distribute
-            // → row.Size shrinks back → labels-layout childBreadth shrinks back → label Size
-            // shrinks back) to settle. A single RefreshAnchors' 8-iteration budget isn't
-            // enough in that case, so we also force a second flush.
+            // Pack(w,h,w,h) forces exact size (width acts as min, maxWidth clamps).
             settingsMenu.Pack(settingsMenuWidth, rightHeight, settingsMenuWidth, rightHeight);
             effectsList.Pack(effectsListWidth, rightHeight, effectsListWidth, rightHeight);
             layersList.Pack(layersListWidth, rightHeight, layersListWidth, rightHeight);
             effectConfigUi.Pack(effectConfigWidth, leftHeight, effectConfigWidth, leftHeight);
-
-            // Second flush — gives the cascade (row preferredSize.Y shrinking back after
-            // labels re-measured short) another full iteration budget to unwind from a deep
-            // shrink. Without this, "extreme shrink then expand" leaves rows stuck tall.
-            WidgetManager.InvalidateAnchors();
-            WidgetManager.RefreshAnchors();
 
             resizeStoryboard();
         }
