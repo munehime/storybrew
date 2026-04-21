@@ -90,6 +90,20 @@ namespace StorybrewEditor.ScreenLayers
         private SlidingPanel settingsMenuPanel;
         private SlidingPanel effectConfigPanel;
 
+        private ResizeHandle effectsListHandle;
+        private ResizeHandle layersListHandle;
+        private ResizeHandle settingsMenuHandle;
+        private ResizeHandle effectConfigHandle;
+
+        private const float MinPanelWidth = 200f;
+        private const float DefaultRightPanelWidth = 440f - 24f;
+        private const float DefaultLeftPanelWidth = 440f;
+        private float effectsListWidth = DefaultRightPanelWidth;
+        private float layersListWidth = DefaultRightPanelWidth;
+        private float settingsMenuWidth = DefaultRightPanelWidth;
+        private float effectConfigWidth = DefaultLeftPanelWidth;
+        private float dragStartWidth;
+
         private AudioStream audio;
         private TimeSourceExtender timeSource;
         private double? pendingSeek;
@@ -286,6 +300,17 @@ namespace StorybrewEditor.ScreenLayers
             effectConfigPanel.OnShownChanged += (sender, e) => resizeStoryboard();
             RegisterSlidingPanel(effectConfigPanel);
 
+            effectConfigHandle = new ResizeHandle(WidgetManager)
+            {
+                AnchorTarget = effectConfigUi,
+                AnchorFrom = BoxAlignment.TopRight,
+                AnchorTo = BoxAlignment.TopRight,
+            };
+            effectConfigUi.Add(effectConfigHandle);
+            RegisterResizeHandle(effectConfigHandle);
+            effectConfigHandle.OnDragStart += () => dragStartWidth = effectConfigWidth;
+            effectConfigHandle.OnDragDelta += total => { effectConfigWidth = dragStartWidth + total; repackPanels(); };
+
             WidgetManager.Root.Add(effectsList = new EffectList(WidgetManager, project, effectConfigUi)
             {
                 AnchorTarget = bottomRightLayout,
@@ -302,6 +327,17 @@ namespace StorybrewEditor.ScreenLayers
             effectsList.OnEffectSelected += effect => timeline.Value = (float)effect.StartTime / 1000;
             effectsListPanel = new SlidingPanel(effectsList, SlidingPanel.Side.Right);
             RegisterSlidingPanel(effectsListPanel);
+
+            effectsListHandle = new ResizeHandle(WidgetManager)
+            {
+                AnchorTarget = effectsList,
+                AnchorFrom = BoxAlignment.TopLeft,
+                AnchorTo = BoxAlignment.TopLeft,
+            };
+            effectsList.Add(effectsListHandle);
+            RegisterResizeHandle(effectsListHandle);
+            effectsListHandle.OnDragStart += () => dragStartWidth = effectsListWidth;
+            effectsListHandle.OnDragDelta += total => { effectsListWidth = dragStartWidth - total; repackPanels(); };
 
             WidgetManager.Root.Add(layersList = new LayerList(WidgetManager, project.LayerManager)
             {
@@ -320,6 +356,17 @@ namespace StorybrewEditor.ScreenLayers
             layersListPanel = new SlidingPanel(layersList, SlidingPanel.Side.Right);
             RegisterSlidingPanel(layersListPanel);
 
+            layersListHandle = new ResizeHandle(WidgetManager)
+            {
+                AnchorTarget = layersList,
+                AnchorFrom = BoxAlignment.TopLeft,
+                AnchorTo = BoxAlignment.TopLeft,
+            };
+            layersList.Add(layersListHandle);
+            RegisterResizeHandle(layersListHandle);
+            layersListHandle.OnDragStart += () => dragStartWidth = layersListWidth;
+            layersListHandle.OnDragDelta += total => { layersListWidth = dragStartWidth - total; repackPanels(); };
+
             WidgetManager.Root.Add(settingsMenu = new SettingsMenu(WidgetManager, project)
             {
                 AnchorTarget = bottomRightLayout,
@@ -329,6 +376,17 @@ namespace StorybrewEditor.ScreenLayers
             });
             settingsMenuPanel = new SlidingPanel(settingsMenu, SlidingPanel.Side.Right);
             RegisterSlidingPanel(settingsMenuPanel);
+
+            settingsMenuHandle = new ResizeHandle(WidgetManager)
+            {
+                AnchorTarget = settingsMenu,
+                AnchorFrom = BoxAlignment.TopLeft,
+                AnchorTo = BoxAlignment.TopLeft,
+            };
+            settingsMenu.Add(settingsMenuHandle);
+            RegisterResizeHandle(settingsMenuHandle);
+            settingsMenuHandle.OnDragStart += () => dragStartWidth = settingsMenuWidth;
+            settingsMenuHandle.OnDragDelta += total => { settingsMenuWidth = dragStartWidth - total; repackPanels(); };
 
             WidgetManager.Root.Add(statusLayout = new LinearLayout(WidgetManager)
             {
@@ -844,11 +902,25 @@ namespace StorybrewEditor.ScreenLayers
             bottomRightLayout.Pack(440);
             bottomLeftLayout.Pack(WidgetManager.Size.X - bottomRightLayout.Width);
 
-            settingsMenu.Pack(bottomRightLayout.Width - 24, WidgetManager.Root.Height - bottomRightLayout.Height - 16);
-            effectsList.Pack(bottomRightLayout.Width - 24, WidgetManager.Root.Height - bottomRightLayout.Height - 16);
-            layersList.Pack(bottomRightLayout.Width - 24, WidgetManager.Root.Height - bottomRightLayout.Height - 16);
+            repackPanels();
+        }
 
-            effectConfigUi.Pack(bottomRightLayout.Width, WidgetManager.Root.Height - bottomLeftLayout.Height - 16);
+        private void repackPanels()
+        {
+            var maxWidth = Math.Max(MinPanelWidth, WidgetManager.Root.Width * 0.6f);
+            effectsListWidth = MathHelper.Clamp(effectsListWidth, MinPanelWidth, maxWidth);
+            layersListWidth = MathHelper.Clamp(layersListWidth, MinPanelWidth, maxWidth);
+            settingsMenuWidth = MathHelper.Clamp(settingsMenuWidth, MinPanelWidth, maxWidth);
+            effectConfigWidth = MathHelper.Clamp(effectConfigWidth, MinPanelWidth, maxWidth);
+
+            var rightHeight = WidgetManager.Root.Height - bottomRightLayout.Height - 16;
+            var leftHeight = WidgetManager.Root.Height - bottomLeftLayout.Height - 16;
+
+            settingsMenu.Pack(settingsMenuWidth, rightHeight, settingsMenuWidth, rightHeight);
+            effectsList.Pack(effectsListWidth, rightHeight, effectsListWidth, rightHeight);
+            layersList.Pack(layersListWidth, rightHeight, layersListWidth, rightHeight);
+            effectConfigUi.Pack(effectConfigWidth, leftHeight, effectConfigWidth, leftHeight);
+
             resizeStoryboard();
         }
 

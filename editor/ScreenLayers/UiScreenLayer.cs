@@ -17,6 +17,7 @@ namespace StorybrewEditor.ScreenLayers
 
         private float opacity = 0;
         private readonly List<SlidingPanel> slidingPanels = new List<SlidingPanel>();
+        private readonly List<ResizeHandle> resizeHandles = new List<ResizeHandle>();
 
         public override void Load()
         {
@@ -48,6 +49,7 @@ namespace StorybrewEditor.ScreenLayers
                 else opacity = MathHelper.Clamp(opacity + (opacity < targetOpacity ? 0.07f : -0.07f), 0, 1);
 
                 foreach (var panel in slidingPanels) panel.Update();
+                foreach (var handle in resizeHandles) handle.Update();
             }
             WidgetManager.Opacity = opacity * (float)TransitionProgress;
         }
@@ -55,6 +57,11 @@ namespace StorybrewEditor.ScreenLayers
         protected void RegisterSlidingPanel(SlidingPanel panel)
         {
             slidingPanels.Add(panel);
+        }
+
+        protected void RegisterResizeHandle(ResizeHandle handle)
+        {
+            resizeHandles.Add(handle);
         }
 
         public override void Draw(DrawContext drawContext, double tween)
