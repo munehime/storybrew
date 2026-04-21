@@ -294,6 +294,7 @@ namespace StorybrewEditor.ScreenLayers
                 AnchorTo = BoxAlignment.TopLeft,
                 Offset = new Vector2(16, 16),
                 Displayed = false,
+                ClipChildren = true,
             });
             effectConfigPanel = new SlidingPanel(effectConfigUi, SlidingPanel.Side.Left);
             effectConfigUi.Panel = effectConfigPanel;
@@ -317,6 +318,7 @@ namespace StorybrewEditor.ScreenLayers
                 AnchorFrom = BoxAlignment.BottomRight,
                 AnchorTo = BoxAlignment.TopRight,
                 Offset = new Vector2(-16, 0),
+                ClipChildren = true,
             });
             effectsList.OnEffectPreselect += effect =>
             {
@@ -345,6 +347,7 @@ namespace StorybrewEditor.ScreenLayers
                 AnchorFrom = BoxAlignment.BottomRight,
                 AnchorTo = BoxAlignment.TopRight,
                 Offset = new Vector2(-16, 0),
+                ClipChildren = true,
             });
             layersList.OnLayerPreselect += layer =>
             {
@@ -373,6 +376,7 @@ namespace StorybrewEditor.ScreenLayers
                 AnchorFrom = BoxAlignment.BottomRight,
                 AnchorTo = BoxAlignment.TopRight,
                 Offset = new Vector2(-16, 0),
+                ClipChildren = true,
             });
             settingsMenuPanel = new SlidingPanel(settingsMenu, SlidingPanel.Side.Right);
             RegisterSlidingPanel(settingsMenuPanel);
@@ -916,10 +920,18 @@ namespace StorybrewEditor.ScreenLayers
             var rightHeight = WidgetManager.Root.Height - bottomRightLayout.Height - 16;
             var leftHeight = WidgetManager.Root.Height - bottomLeftLayout.Height - 16;
 
-            settingsMenu.Pack(settingsMenuWidth, rightHeight, settingsMenuWidth, rightHeight);
-            effectsList.Pack(effectsListWidth, rightHeight, effectsListWidth, rightHeight);
-            layersList.Pack(layersListWidth, rightHeight, layersListWidth, rightHeight);
-            effectConfigUi.Pack(effectConfigWidth, leftHeight, effectConfigWidth, leftHeight);
+            // Set size directly rather than Pack(w,h,w,h) — Pack's maxWidth-clamped re-pack can
+            // recurse when a child's PreferredSize shifts (e.g. labels re-wrapping after their
+            // Size changes), leaving the layout partially applied. Direct Size set invalidates
+            // the layout chain cleanly and the next Bounds access refreshes anchors.
+            settingsMenu.Size = new Vector2(settingsMenuWidth, rightHeight);
+            effectsList.Size = new Vector2(effectsListWidth, rightHeight);
+            layersList.Size = new Vector2(layersListWidth, rightHeight);
+            effectConfigUi.Size = new Vector2(effectConfigWidth, leftHeight);
+
+            // Explicit layout flush so anchors + child sizing settle this frame (otherwise the
+            // handle and panel tracking can lag the mouse by one frame).
+            WidgetManager.RefreshAnchors();
 
             resizeStoryboard();
         }
