@@ -920,17 +920,24 @@ namespace StorybrewEditor.ScreenLayers
             var rightHeight = WidgetManager.Root.Height - bottomRightLayout.Height - 16;
             var leftHeight = WidgetManager.Root.Height - bottomLeftLayout.Height - 16;
 
-            // Set size directly rather than Pack(w,h,w,h) — Pack's maxWidth-clamped re-pack can
-            // recurse when a child's PreferredSize shifts (e.g. labels re-wrapping after their
-            // Size changes), leaving the layout partially applied. Direct Size set invalidates
-            // the layout chain cleanly and the next Bounds access refreshes anchors.
-            settingsMenu.Size = new Vector2(settingsMenuWidth, rightHeight);
-            effectsList.Size = new Vector2(effectsListWidth, rightHeight);
-            layersList.Size = new Vector2(layersListWidth, rightHeight);
-            effectConfigUi.Size = new Vector2(effectConfigWidth, leftHeight);
+            // Pack(w,h,w,h) forces exact size (width acts as min, maxWidth clamps). Pack also
+            // self-recurses when PreferredSize shifts post-layout (e.g. labels re-wrapping
+            // after their Size changes), which gives the layout tree an extra RefreshAnchors
+            // pass to converge. After extreme shrink-then-expand, labels that wrapped to
+            // many lines when MaxSize was tiny need multiple cascades (label re-measure →
+            // labels-layout re-distribute → row re-distribute → effectsLayout re-distribute
+            // → row.Size shrinks back → labels-layout childBreadth shrinks back → label Size
+            // shrinks back) to settle. A single RefreshAnchors' 8-iteration budget isn't
+            // enough in that case, so we also force a second flush.
+            settingsMenu.Pack(settingsMenuWidth, rightHeight, settingsMenuWidth, rightHeight);
+            effectsList.Pack(effectsListWidth, rightHeight, effectsListWidth, rightHeight);
+            layersList.Pack(layersListWidth, rightHeight, layersListWidth, rightHeight);
+            effectConfigUi.Pack(effectConfigWidth, leftHeight, effectConfigWidth, leftHeight);
 
-            // Explicit layout flush so anchors + child sizing settle this frame (otherwise the
-            // handle and panel tracking can lag the mouse by one frame).
+            // Second flush — gives the cascade (row preferredSize.Y shrinking back after
+            // labels re-measured short) another full iteration budget to unwind from a deep
+            // shrink. Without this, "extreme shrink then expand" leaves rows stuck tall.
+            WidgetManager.InvalidateAnchors();
             WidgetManager.RefreshAnchors();
 
             resizeStoryboard();
