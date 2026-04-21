@@ -58,7 +58,10 @@ namespace StorybrewCommon.Subtitles
 
                 if (kernel == null)
                 {
-                    var radius = Math.Min(Radius, 24);
+                    // Previous hard cap at 24 was clipping large glows; raise
+                    // it to 64 (still capped so convolution stays tractable —
+                    // cost is O(W*H*R²)).
+                    var radius = Math.Min(Radius, 64);
                     var power = Power >= 1 ? Power : Radius * 0.5;
                     kernel = BitmapHelper.CalculateGaussianKernel(radius, power);
                 }
