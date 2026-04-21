@@ -111,6 +111,17 @@ namespace StorybrewEditor.ScreenLayers
         private int snapDivisor = 4;
         private Vector2 storyboardPosition;
 
+        // Storyboard workspace zoom/pan (Figma-style: Ctrl+wheel to zoom at cursor,
+        // middle-drag to pan, Shift+wheel pans X, Alt+wheel pans Y, Ctrl+0 resets).
+        private const float MinStoryboardZoom = 0.015f;
+        private const float MaxStoryboardZoom = 16f;
+        private const float StoryboardZoomStep = 1.15f;
+        private const float StoryboardWheelPanStep = 64f;
+        private float storyboardZoom = 1f;
+        private Vector2 storyboardPan = Vector2.Zero;
+        private bool isStoryboardPanning;
+        private Vector2 storyboardPanMouseAnchor;
+
         public ProjectMenu(Project project)
         {
             this.project = project;
@@ -132,6 +143,10 @@ namespace StorybrewEditor.ScreenLayers
                 AnchorFrom = BoxAlignment.Centre,
                 AnchorTo = BoxAlignment.Centre,
             });
+            mainStoryboardContainer.OnMouseWheel += onStoryboardWheel;
+            mainStoryboardContainer.OnClickDown += onStoryboardClickDown;
+            mainStoryboardContainer.OnClickMove += onStoryboardClickMove;
+            mainStoryboardContainer.OnClickUp += onStoryboardClickUp;
 
             WidgetManager.Root.Add(bottomLeftLayout = new LinearLayout(WidgetManager)
             {
@@ -599,6 +614,14 @@ namespace StorybrewEditor.ScreenLayers
                             return true;
                         }
                         break;
+                    case Key.Number0:
+                    case Key.Keypad0:
+                        if (e.Control)
+                        {
+                            resetStoryboardView();
+                            return true;
+                        }
+                        break;
                 }
             }
             return base.OnKeyDown(e);
@@ -932,14 +955,91 @@ namespace StorybrewEditor.ScreenLayers
         private void resizeStoryboard()
         {
             var parentSize = WidgetManager.Size;
+            Vector2 baseOffset;
             if (effectConfigPanel?.IsShown ?? effectConfigUi.Displayed)
             {
-                mainStoryboardContainer.Offset = new Vector2(effectConfigUi.Bounds.Right / 2, 0);
+                baseOffset = new Vector2(effectConfigUi.Bounds.Right / 2, 0);
                 parentSize.X -= effectConfigUi.Bounds.Right;
             }
-            else mainStoryboardContainer.Offset = Vector2.Zero;
-            mainStoryboardContainer.Size = fitButton.Checked ? new Vector2(parentSize.X, (parentSize.X * 9) / 16) : parentSize;
+            else baseOffset = Vector2.Zero;
+
+            var baseSize = fitButton.Checked ? new Vector2(parentSize.X, (parentSize.X * 9) / 16) : parentSize;
+            mainStoryboardContainer.Size = baseSize * storyboardZoom;
+            mainStoryboardContainer.Offset = baseOffset + storyboardPan;
         }
+
+        #region Storyboard workspace zoom/pan
+
+        private bool onStoryboardWheel(WidgetEvent evt, MouseWheelEventArgs e)
+        {
+            var input = Manager.GetContext<Editor>().InputManager;
+            if (input.Control)
+            {
+                var ratio = e.DeltaPrecise > 0 ? StoryboardZoomStep : 1f / StoryboardZoomStep;
+                zoomStoryboardAt(ratio, WidgetManager.MousePosition);
+                return true;
+            }
+            if (input.Shift)
+            {
+                storyboardPan.X += e.DeltaPrecise * StoryboardWheelPanStep;
+                resizeStoryboard();
+                return true;
+            }
+            if (input.Alt)
+            {
+                storyboardPan.Y += e.DeltaPrecise * StoryboardWheelPanStep;
+                resizeStoryboard();
+                return true;
+            }
+            // No modifier — fall through to the screen-layer default (timeline scroll).
+            return false;
+        }
+
+        private bool onStoryboardClickDown(WidgetEvent evt, MouseButtonEventArgs e)
+        {
+            if (e.Button != MouseButton.Middle) return false;
+            isStoryboardPanning = true;
+            storyboardPanMouseAnchor = WidgetManager.MousePosition - storyboardPan;
+            return true;
+        }
+
+        private void onStoryboardClickMove(WidgetEvent evt, MouseMoveEventArgs e)
+        {
+            if (!isStoryboardPanning) return;
+            storyboardPan = WidgetManager.MousePosition - storyboardPanMouseAnchor;
+            resizeStoryboard();
+        }
+
+        private void onStoryboardClickUp(WidgetEvent evt, MouseButtonEventArgs e)
+        {
+            if (e.Button != MouseButton.Middle) return;
+            isStoryboardPanning = false;
+        }
+
+        private void zoomStoryboardAt(float ratio, Vector2 cursor)
+        {
+            var newZoom = MathHelper.Clamp(storyboardZoom * ratio, MinStoryboardZoom, MaxStoryboardZoom);
+            var actualRatio = newZoom / storyboardZoom;
+            if (actualRatio == 1f) return;
+
+            // Keep the logical point under the cursor anchored: the container is centre-anchored
+            // to Root, so its on-screen center is rootCenter + pan. Solving for the new pan
+            // that preserves (cursor - containerCenter) / (baseSize * zoom):
+            //   newPan = pan * r + (cursor - rootCenter) * (1 - r)
+            var rootCenter = WidgetManager.Root.AbsolutePosition + WidgetManager.Root.Size * 0.5f;
+            storyboardPan = storyboardPan * actualRatio + (cursor - rootCenter) * (1f - actualRatio);
+            storyboardZoom = newZoom;
+            resizeStoryboard();
+        }
+
+        private void resetStoryboardView()
+        {
+            storyboardZoom = 1f;
+            storyboardPan = Vector2.Zero;
+            resizeStoryboard();
+        }
+
+        #endregion
 
         private void resizeTimeline()
         {
