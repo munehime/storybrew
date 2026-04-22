@@ -4,6 +4,7 @@ using BrewLib.Time;
 using BrewLib.UserInterface;
 using BrewLib.Util;
 using OpenTK;
+using OpenTK.Graphics;
 using OpenTK.Graphics.OpenGL;
 using OpenTK.Input;
 using StorybrewCommon.Mapset;
@@ -39,6 +40,9 @@ namespace StorybrewEditor.ScreenLayers
 
         private LinearLayout bottomLeftLayout;
         private LinearLayout bottomRightLayout;
+        private LinearLayout bottomRightSecondaryLayout;
+        private Button gameplayBorderButton;
+        private GameplayBorderOverlay gameplayBorderOverlay;
         private Button timeButton;
         private Button divisorButton;
         private Button audioTimeFactorButton;
@@ -142,6 +146,13 @@ namespace StorybrewEditor.ScreenLayers
                 AnchorTarget = WidgetManager.Root,
                 AnchorFrom = BoxAlignment.Centre,
                 AnchorTo = BoxAlignment.Centre,
+            });
+            mainStoryboardContainer.Add(gameplayBorderOverlay = new GameplayBorderOverlay(WidgetManager)
+            {
+                AnchorTarget = mainStoryboardContainer,
+                AnchorFrom = BoxAlignment.Centre,
+                AnchorTo = BoxAlignment.Centre,
+                Displayed = false,
             });
             mainStoryboardContainer.OnMouseWheel += onStoryboardWheel;
             mainStoryboardContainer.OnClickDown += onStoryboardClickDown;
@@ -302,6 +313,29 @@ namespace StorybrewEditor.ScreenLayers
                 },
             });
 
+            // Second button row stacked above bottomRightLayout. Holds icon buttons that
+            // don't fit the frequently-used main row (e.g. gameplay-border toggle).
+            WidgetManager.Root.Add(bottomRightSecondaryLayout = new LinearLayout(WidgetManager)
+            {
+                AnchorTarget = bottomRightLayout,
+                AnchorFrom = BoxAlignment.BottomRight,
+                AnchorTo = BoxAlignment.TopRight,
+                Padding = new FourSide(16, 16, 16, 0),
+                Horizontal = true,
+                Fill = true,
+                Children = new Widget[]
+                {
+                    gameplayBorderButton = new Button(WidgetManager)
+                    {
+                        StyleName = "icon",
+                        Icon = IconFont.Gamepad,
+                        Tooltip = "Gameplay border: Off\nClick to cycle: Standard → Widescreen → Off",
+                        AnchorFrom = BoxAlignment.Centre,
+                        CanGrow = false,
+                    },
+                },
+            });
+
             WidgetManager.Root.Add(effectConfigUi = new EffectConfigUi(WidgetManager)
             {
                 AnchorTarget = WidgetManager.Root,
@@ -329,7 +363,7 @@ namespace StorybrewEditor.ScreenLayers
 
             WidgetManager.Root.Add(effectsList = new EffectList(WidgetManager, project, effectConfigUi)
             {
-                AnchorTarget = bottomRightLayout,
+                AnchorTarget = bottomRightSecondaryLayout,
                 AnchorFrom = BoxAlignment.BottomRight,
                 AnchorTo = BoxAlignment.TopRight,
                 Offset = new Vector2(-16, 0),
@@ -358,7 +392,7 @@ namespace StorybrewEditor.ScreenLayers
 
             WidgetManager.Root.Add(layersList = new LayerList(WidgetManager, project.LayerManager)
             {
-                AnchorTarget = bottomRightLayout,
+                AnchorTarget = bottomRightSecondaryLayout,
                 AnchorFrom = BoxAlignment.BottomRight,
                 AnchorTo = BoxAlignment.TopRight,
                 Offset = new Vector2(-16, 0),
@@ -387,7 +421,7 @@ namespace StorybrewEditor.ScreenLayers
 
             WidgetManager.Root.Add(settingsMenu = new SettingsMenu(WidgetManager, project)
             {
-                AnchorTarget = bottomRightLayout,
+                AnchorTarget = bottomRightSecondaryLayout,
                 AnchorFrom = BoxAlignment.BottomRight,
                 AnchorTo = BoxAlignment.TopRight,
                 Offset = new Vector2(-16, 0),
@@ -455,6 +489,17 @@ namespace StorybrewEditor.ScreenLayers
 
             hideUiButton.OnClick += (sender, e) => hideUi();
             screenshotButton.OnClick += (sender, e) => scheduleScreenshot(save: true);
+
+            gameplayBorderButton.OnClick += (sender, e) =>
+            {
+                var next = ((int)Program.Settings.GameplayBorderMode + 1) % 3;
+                Program.Settings.GameplayBorderMode.Set(next);
+                Program.Settings.Save();
+            };
+            Program.Settings.GameplayBorderMode.OnValueChanged += (sender, e) => applyGameplayBorderMode();
+            Program.Settings.GameplayBorderColor.OnValueChanged += (sender, e) => applyGameplayBorderColor();
+            applyGameplayBorderColor();
+            applyGameplayBorderMode();
             
             timeButton.OnClick += (sender, e) => Manager.ShowPrompt("Skip to...", value =>
             {
@@ -927,6 +972,7 @@ namespace StorybrewEditor.ScreenLayers
             base.Resize(width, height);
 
             bottomRightLayout.Pack(440);
+            bottomRightSecondaryLayout.Pack();
             bottomLeftLayout.Pack(WidgetManager.Size.X - bottomRightLayout.Width);
 
             repackPanels();
@@ -940,7 +986,9 @@ namespace StorybrewEditor.ScreenLayers
             settingsMenuWidth = MathHelper.Clamp(settingsMenuWidth, MinPanelWidth, maxWidth);
             effectConfigWidth = MathHelper.Clamp(effectConfigWidth, MinPanelWidth, maxWidth);
 
-            var rightHeight = WidgetManager.Root.Height - bottomRightLayout.Height - 16;
+            // The three right-side panels anchor above bottomRightSecondaryLayout, which itself
+            // sits above bottomRightLayout — subtract both rows' heights.
+            var rightHeight = WidgetManager.Root.Height - bottomRightLayout.Height - bottomRightSecondaryLayout.Height - 16;
             var leftHeight = WidgetManager.Root.Height - bottomLeftLayout.Height - 16;
 
             // Pack(w,h,w,h) forces exact size (width acts as min, maxWidth clamps).
@@ -1037,6 +1085,28 @@ namespace StorybrewEditor.ScreenLayers
             storyboardZoom = 1f;
             storyboardPan = Vector2.Zero;
             resizeStoryboard();
+        }
+
+        #endregion
+
+        #region Gameplay border overlay
+
+        private void applyGameplayBorderMode()
+        {
+            var raw = (int)Program.Settings.GameplayBorderMode;
+            if (raw < 0 || raw > 2) raw = 0;
+            var mode = (GameplayBorderOverlay.BorderMode)raw;
+
+            gameplayBorderOverlay.Mode = mode;
+            gameplayBorderOverlay.Displayed = mode != GameplayBorderOverlay.BorderMode.Off;
+            gameplayBorderButton.Checked = mode != GameplayBorderOverlay.BorderMode.Off;
+            gameplayBorderButton.Tooltip =
+                $"Gameplay border: {mode}\nClick to cycle: Standard → Widescreen → Off";
+        }
+
+        private void applyGameplayBorderColor()
+        {
+            gameplayBorderOverlay.BorderColor = GameplayBorderOverlay.ParseHexColor(Program.Settings.GameplayBorderColor, Color4.Green);
         }
 
         #endregion

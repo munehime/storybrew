@@ -1,6 +1,7 @@
 ﻿using BrewLib.UserInterface;
 using BrewLib.Util;
 using OpenTK;
+using OpenTK.Graphics;
 using StorybrewEditor.ScreenLayers;
 using StorybrewEditor.Storyboarding;
 using System;
@@ -25,6 +26,7 @@ namespace StorybrewEditor.UserInterface.Components
             Button size1366Button, size1600Button, size1920Button, fullscreenBorderlessButton;
             Label dimLabel;
             Slider dimSlider;
+            HsbColorPicker gameplayBorderColorPicker;
 
             Add(layout = new LinearLayout(manager)
             {
@@ -142,6 +144,26 @@ namespace StorybrewEditor.UserInterface.Components
                                 AnchorTo = BoxAlignment.Centre,
                                 Checkable = true,
                             },
+                            new LinearLayout(manager)
+                            {
+                                StyleName = "condensed",
+                                FitChildren = true,
+                                Children = new Widget[]
+                                {
+                                    new Label(manager)
+                                    {
+                                        StyleName = "small",
+                                        Text = "Gameplay border",
+                                    },
+                                    gameplayBorderColorPicker = new HsbColorPicker(manager)
+                                    {
+                                        Value = Color4.Green,
+                                        AnchorFrom = BoxAlignment.Right,
+                                        AnchorTo = BoxAlignment.Right,
+                                        CanGrow = false,
+                                    },
+                                },
+                            },
                         }
                     }
                 },
@@ -205,6 +227,20 @@ namespace StorybrewEditor.UserInterface.Components
                 updateWindowSizeButtons();
             };
             updateWindowSizeButtons();
+
+            gameplayBorderColorPicker.Value = GameplayBorderOverlay.ParseHexColor(
+                Program.Settings.GameplayBorderColor, Color4.Green);
+            gameplayBorderColorPicker.OnValueCommited += (sender, e) =>
+            {
+                Program.Settings.GameplayBorderColor.Set(
+                    GameplayBorderOverlay.FormatHexColor(gameplayBorderColorPicker.Value));
+                Program.Settings.Save();
+            };
+            Program.Settings.GameplayBorderColor.OnValueChanged += (sender, e) =>
+            {
+                gameplayBorderColorPicker.Value = GameplayBorderOverlay.ParseHexColor(
+                    Program.Settings.GameplayBorderColor, Color4.Green);
+            };
         }
 
         protected override void Dispose(bool disposing)

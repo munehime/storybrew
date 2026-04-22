@@ -27,6 +27,12 @@ namespace StorybrewEditor
         public readonly Setting<string> MenuBackgroundPath = new Setting<string>("");
         public readonly Setting<bool> MenuBackgroundAudioEnabled = new Setting<bool>(false);
 
+        // Gameplay border overlay on the storyboard workspace:
+        // 0 = off, 1 = standard (640x480 4:3), 2 = widescreen (854x480 16:9).
+        // Color stored as 8-char hex "RRGGBBAA".
+        public readonly Setting<int> GameplayBorderMode = new Setting<int>(0);
+        public readonly Setting<string> GameplayBorderColor = new Setting<string>("00FF00FF");
+
         private readonly string path;
 
         public Settings(string path = DefaultPath)
