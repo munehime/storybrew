@@ -40,9 +40,13 @@ namespace StorybrewEditor.ScreenLayers
 
         private LinearLayout bottomLeftLayout;
         private LinearLayout bottomRightLayout;
-        private LinearLayout bottomRightSecondaryLayout;
         private Button gameplayBorderButton;
         private GameplayBorderOverlay gameplayBorderOverlay;
+
+        // Vertical space reserved above bottomRightLayout for the icon column(s) stacked on
+        // top of the main row (currently just gameplayBorderButton above hideUiButton).
+        // Icon buttons are ~32px tall + 8px gap = 40px total.
+        private const float SecondaryColumnReservedHeight = 40f;
         private Button timeButton;
         private Button divisorButton;
         private Button audioTimeFactorButton;
@@ -313,27 +317,19 @@ namespace StorybrewEditor.ScreenLayers
                 },
             });
 
-            // Second button row stacked above bottomRightLayout. Holds icon buttons that
-            // don't fit the frequently-used main row (e.g. gameplay-border toggle).
-            WidgetManager.Root.Add(bottomRightSecondaryLayout = new LinearLayout(WidgetManager)
+            // Gameplay-border toggle sits in a "column" directly above hideUiButton for
+            // visual consistency with the main row. Future column-stacked icons can follow
+            // the same pattern (anchor to their corresponding main-row button's top).
+            WidgetManager.Root.Add(gameplayBorderButton = new Button(WidgetManager)
             {
-                AnchorTarget = bottomRightLayout,
-                AnchorFrom = BoxAlignment.BottomRight,
-                AnchorTo = BoxAlignment.TopRight,
-                Padding = new FourSide(16, 16, 16, 0),
-                Horizontal = true,
-                Fill = true,
-                Children = new Widget[]
-                {
-                    gameplayBorderButton = new Button(WidgetManager)
-                    {
-                        StyleName = "icon",
-                        Icon = IconFont.Gamepad,
-                        Tooltip = "Gameplay border: Off\nClick to cycle: Standard → Widescreen → Off",
-                        AnchorFrom = BoxAlignment.Centre,
-                        CanGrow = false,
-                    },
-                },
+                StyleName = "icon",
+                Icon = IconFont.Gamepad,
+                Tooltip = "Gameplay border: Off\nClick to cycle: Standard → Widescreen → Off",
+                AnchorTarget = hideUiButton,
+                AnchorFrom = BoxAlignment.Bottom,
+                AnchorTo = BoxAlignment.Top,
+                Offset = new Vector2(0, -8),
+                CanGrow = false,
             });
 
             WidgetManager.Root.Add(effectConfigUi = new EffectConfigUi(WidgetManager)
@@ -363,10 +359,10 @@ namespace StorybrewEditor.ScreenLayers
 
             WidgetManager.Root.Add(effectsList = new EffectList(WidgetManager, project, effectConfigUi)
             {
-                AnchorTarget = bottomRightSecondaryLayout,
+                AnchorTarget = bottomRightLayout,
                 AnchorFrom = BoxAlignment.BottomRight,
                 AnchorTo = BoxAlignment.TopRight,
-                Offset = new Vector2(-16, 0),
+                Offset = new Vector2(-16, -SecondaryColumnReservedHeight),
                 ClipChildren = true,
             });
             effectsList.OnEffectPreselect += effect =>
@@ -392,10 +388,10 @@ namespace StorybrewEditor.ScreenLayers
 
             WidgetManager.Root.Add(layersList = new LayerList(WidgetManager, project.LayerManager)
             {
-                AnchorTarget = bottomRightSecondaryLayout,
+                AnchorTarget = bottomRightLayout,
                 AnchorFrom = BoxAlignment.BottomRight,
                 AnchorTo = BoxAlignment.TopRight,
-                Offset = new Vector2(-16, 0),
+                Offset = new Vector2(-16, -SecondaryColumnReservedHeight),
                 ClipChildren = true,
             });
             layersList.OnLayerPreselect += layer =>
@@ -421,10 +417,10 @@ namespace StorybrewEditor.ScreenLayers
 
             WidgetManager.Root.Add(settingsMenu = new SettingsMenu(WidgetManager, project)
             {
-                AnchorTarget = bottomRightSecondaryLayout,
+                AnchorTarget = bottomRightLayout,
                 AnchorFrom = BoxAlignment.BottomRight,
                 AnchorTo = BoxAlignment.TopRight,
-                Offset = new Vector2(-16, 0),
+                Offset = new Vector2(-16, -SecondaryColumnReservedHeight),
                 ClipChildren = true,
             });
             settingsMenuPanel = new SlidingPanel(settingsMenu, SlidingPanel.Side.Right);
@@ -972,7 +968,6 @@ namespace StorybrewEditor.ScreenLayers
             base.Resize(width, height);
 
             bottomRightLayout.Pack(440);
-            bottomRightSecondaryLayout.Pack();
             bottomLeftLayout.Pack(WidgetManager.Size.X - bottomRightLayout.Width);
 
             repackPanels();
@@ -986,9 +981,9 @@ namespace StorybrewEditor.ScreenLayers
             settingsMenuWidth = MathHelper.Clamp(settingsMenuWidth, MinPanelWidth, maxWidth);
             effectConfigWidth = MathHelper.Clamp(effectConfigWidth, MinPanelWidth, maxWidth);
 
-            // The three right-side panels anchor above bottomRightSecondaryLayout, which itself
-            // sits above bottomRightLayout — subtract both rows' heights.
-            var rightHeight = WidgetManager.Root.Height - bottomRightLayout.Height - bottomRightSecondaryLayout.Height - 16;
+            // Right-side panels sit above bottomRightLayout, with space reserved for the
+            // secondary icon column (gamepad button stacked above hideUiButton).
+            var rightHeight = WidgetManager.Root.Height - bottomRightLayout.Height - SecondaryColumnReservedHeight - 16;
             var leftHeight = WidgetManager.Root.Height - bottomLeftLayout.Height - 16;
 
             // Pack(w,h,w,h) forces exact size (width acts as min, maxWidth clamps).

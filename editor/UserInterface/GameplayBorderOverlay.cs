@@ -1,3 +1,4 @@
+using BrewLib.Graphics;
 using BrewLib.Graphics.Drawables;
 using BrewLib.UserInterface;
 using BrewLib.Util;
@@ -52,25 +53,33 @@ namespace StorybrewEditor.UserInterface
         public GameplayBorderOverlay(WidgetManager manager) : base(manager)
         {
             Hoverable = false;
+            // Load our own dedicated NinePatch instance so its Color can be mutated from
+            // the user-configurable setting without affecting any other skin consumers.
             borderDrawable = Manager.Skin.GetDrawable("gameplayBorder") as NinePatch;
-            if (borderDrawable != null)
-                Background = borderDrawable;
         }
 
-        protected override void Layout()
+        // Draw the border directly from Parent.Bounds each frame — the parent's Size can
+        // change via zoom/pan/window resize without invalidating our Layout, so relying on
+        // our own Size would leave us stale. Bypassing the Size path also keeps the overlay
+        // from participating in layout distribution if it ever gets dropped in a LinearLayout.
+        protected override void DrawBackground(DrawContext drawContext, float actualOpacity)
         {
-            base.Layout();
+            if (mode == BorderMode.Off || borderDrawable == null || Parent == null) return;
 
-            if (Parent == null || mode == BorderMode.Off)
-            {
-                Size = Vector2.Zero;
-                return;
-            }
+            var parentBounds = Parent.Bounds;
+            if (parentBounds.Height <= 0) return;
 
             var aspect = mode == BorderMode.Widescreen ? WidescreenAspect : StandardAspect;
-            var h = Parent.Size.Y;
+            var h = parentBounds.Height;
             var w = h * aspect;
-            Size = new Vector2(w, h);
+            var centerX = parentBounds.Left + parentBounds.Width * 0.5f;
+            var rect = new Box2(
+                centerX - w * 0.5f,
+                parentBounds.Top,
+                centerX + w * 0.5f,
+                parentBounds.Top + h);
+
+            borderDrawable.Draw(drawContext, Manager.Camera, rect, actualOpacity);
         }
 
         // Stored as 6- or 8-char hex "RRGGBB(AA)". Missing/invalid input returns the fallback.
