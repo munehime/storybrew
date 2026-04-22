@@ -331,6 +331,10 @@ namespace StorybrewEditor.ScreenLayers
                 Offset = new Vector2(0, -8),
                 CanGrow = false,
             });
+            // AnchorTarget-anchored widgets are skipped by StackLayout.Layout, so Size stays
+            // (0,0) without an explicit Pack — leaving the Bottom→Top anchor math to place
+            // the button 8px above hideUi (overlap) instead of size.Y+8 above it.
+            gameplayBorderButton.Pack();
 
             WidgetManager.Root.Add(effectConfigUi = new EffectConfigUi(WidgetManager)
             {
