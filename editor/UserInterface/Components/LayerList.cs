@@ -131,6 +131,7 @@ namespace StorybrewEditor.UserInterface.Components
                         new LinearLayout(Manager)
                         {
                             StyleName = "condensed",
+                            FitChildren = true,
                             Children = new Widget[]
                             {
                                 nameLabel = new Label(Manager)

@@ -4,6 +4,7 @@ using BrewLib.Time;
 using BrewLib.UserInterface;
 using BrewLib.Util;
 using OpenTK;
+using OpenTK.Graphics;
 using OpenTK.Graphics.OpenGL;
 using OpenTK.Input;
 using StorybrewCommon.Mapset;
@@ -39,6 +40,13 @@ namespace StorybrewEditor.ScreenLayers
 
         private LinearLayout bottomLeftLayout;
         private LinearLayout bottomRightLayout;
+        private Button gameplayBorderButton;
+        private GameplayBorderOverlay gameplayBorderOverlay;
+
+        // Vertical space reserved above bottomRightLayout for the icon column(s) stacked on
+        // top of the main row (currently just gameplayBorderButton above hideUiButton).
+        // Icon buttons are ~32px tall + 8px gap = 40px total.
+        private const float SecondaryColumnReservedHeight = 40f;
         private Button timeButton;
         private Button divisorButton;
         private Button audioTimeFactorButton;
@@ -76,11 +84,33 @@ namespace StorybrewEditor.ScreenLayers
         private bool pendingScreenshot = false;
         private bool pendingScreenshotSave = false;
 
+        private static readonly Process currentProcess = Process.GetCurrentProcess();
+        private static readonly double totalSystemMemoryGb = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 1024.0 / 1024.0 / 1024.0;
+
         private EffectList effectsList;
         private LayerList layersList;
         private SettingsMenu settingsMenu;
 
         private EffectConfigUi effectConfigUi;
+
+        private SlidingPanel effectsListPanel;
+        private SlidingPanel layersListPanel;
+        private SlidingPanel settingsMenuPanel;
+        private SlidingPanel effectConfigPanel;
+
+        private ResizeHandle effectsListHandle;
+        private ResizeHandle layersListHandle;
+        private ResizeHandle settingsMenuHandle;
+        private ResizeHandle effectConfigHandle;
+
+        private const float MinPanelWidth = 200f;
+        private const float DefaultRightPanelWidth = 440f - 24f;
+        private const float DefaultLeftPanelWidth = 440f;
+        private float effectsListWidth = DefaultRightPanelWidth;
+        private float layersListWidth = DefaultRightPanelWidth;
+        private float settingsMenuWidth = DefaultRightPanelWidth;
+        private float effectConfigWidth = DefaultLeftPanelWidth;
+        private float dragStartWidth;
 
         private AudioStream audio;
         private TimeSourceExtender timeSource;
@@ -88,6 +118,17 @@ namespace StorybrewEditor.ScreenLayers
 
         private int snapDivisor = 4;
         private Vector2 storyboardPosition;
+
+        // Storyboard workspace zoom/pan (Figma-style: Ctrl+wheel to zoom at cursor,
+        // middle-drag to pan, Shift+wheel pans X, Alt+wheel pans Y, Ctrl+0 resets).
+        private const float MinStoryboardZoom = 0.015f;
+        private const float MaxStoryboardZoom = 16f;
+        private const float StoryboardZoomStep = 1.15f;
+        private const float StoryboardWheelPanStep = 64f;
+        private float storyboardZoom = 1f;
+        private Vector2 storyboardPan = Vector2.Zero;
+        private bool isStoryboardPanning;
+        private Vector2 storyboardPanMouseAnchor;
 
         public ProjectMenu(Project project)
         {
@@ -110,6 +151,17 @@ namespace StorybrewEditor.ScreenLayers
                 AnchorFrom = BoxAlignment.Centre,
                 AnchorTo = BoxAlignment.Centre,
             });
+            mainStoryboardContainer.Add(gameplayBorderOverlay = new GameplayBorderOverlay(WidgetManager)
+            {
+                AnchorTarget = mainStoryboardContainer,
+                AnchorFrom = BoxAlignment.Centre,
+                AnchorTo = BoxAlignment.Centre,
+                Displayed = false,
+            });
+            mainStoryboardContainer.OnMouseWheel += onStoryboardWheel;
+            mainStoryboardContainer.OnClickDown += onStoryboardClickDown;
+            mainStoryboardContainer.OnClickMove += onStoryboardClickMove;
+            mainStoryboardContainer.OnClickUp += onStoryboardClickUp;
 
             WidgetManager.Root.Add(bottomLeftLayout = new LinearLayout(WidgetManager)
             {
@@ -265,6 +317,25 @@ namespace StorybrewEditor.ScreenLayers
                 },
             });
 
+            // Gameplay-border toggle sits in a "column" directly above hideUiButton for
+            // visual consistency with the main row. Future column-stacked icons can follow
+            // the same pattern (anchor to their corresponding main-row button's top).
+            WidgetManager.Root.Add(gameplayBorderButton = new Button(WidgetManager)
+            {
+                StyleName = "icon",
+                Icon = IconFont.Gamepad,
+                Tooltip = "Gameplay border: Off\nClick to cycle: Standard → Widescreen → Off",
+                AnchorTarget = hideUiButton,
+                AnchorFrom = BoxAlignment.Bottom,
+                AnchorTo = BoxAlignment.Top,
+                Offset = new Vector2(0, -8),
+                CanGrow = false,
+            });
+            // AnchorTarget-anchored widgets are skipped by StackLayout.Layout, so Size stays
+            // (0,0) without an explicit Pack — leaving the Bottom→Top anchor math to place
+            // the button 8px above hideUi (overlap) instead of size.Y+8 above it.
+            gameplayBorderButton.Pack();
+
             WidgetManager.Root.Add(effectConfigUi = new EffectConfigUi(WidgetManager)
             {
                 AnchorTarget = WidgetManager.Root,
@@ -272,15 +343,31 @@ namespace StorybrewEditor.ScreenLayers
                 AnchorTo = BoxAlignment.TopLeft,
                 Offset = new Vector2(16, 16),
                 Displayed = false,
+                ClipChildren = true,
             });
-            effectConfigUi.OnDisplayedChanged += (sender, e) => resizeStoryboard();
+            effectConfigPanel = new SlidingPanel(effectConfigUi, SlidingPanel.Side.Left);
+            effectConfigUi.Panel = effectConfigPanel;
+            effectConfigPanel.OnShownChanged += (sender, e) => resizeStoryboard();
+            RegisterSlidingPanel(effectConfigPanel);
+
+            effectConfigHandle = new ResizeHandle(WidgetManager)
+            {
+                AnchorTarget = effectConfigUi,
+                AnchorFrom = BoxAlignment.TopRight,
+                AnchorTo = BoxAlignment.TopRight,
+            };
+            effectConfigUi.Add(effectConfigHandle);
+            RegisterResizeHandle(effectConfigHandle);
+            effectConfigHandle.OnDragStart += () => dragStartWidth = effectConfigWidth;
+            effectConfigHandle.OnDragDelta += total => { effectConfigWidth = dragStartWidth + total; repackPanels(); };
 
             WidgetManager.Root.Add(effectsList = new EffectList(WidgetManager, project, effectConfigUi)
             {
                 AnchorTarget = bottomRightLayout,
                 AnchorFrom = BoxAlignment.BottomRight,
                 AnchorTo = BoxAlignment.TopRight,
-                Offset = new Vector2(-16, 0),
+                Offset = new Vector2(-16, -SecondaryColumnReservedHeight),
+                ClipChildren = true,
             });
             effectsList.OnEffectPreselect += effect =>
             {
@@ -289,13 +376,27 @@ namespace StorybrewEditor.ScreenLayers
                 else timeline.ClearHighlight();
             };
             effectsList.OnEffectSelected += effect => timeline.Value = (float)effect.StartTime / 1000;
+            effectsListPanel = new SlidingPanel(effectsList, SlidingPanel.Side.Right);
+            RegisterSlidingPanel(effectsListPanel);
+
+            effectsListHandle = new ResizeHandle(WidgetManager)
+            {
+                AnchorTarget = effectsList,
+                AnchorFrom = BoxAlignment.TopLeft,
+                AnchorTo = BoxAlignment.TopLeft,
+            };
+            effectsList.Add(effectsListHandle);
+            RegisterResizeHandle(effectsListHandle);
+            effectsListHandle.OnDragStart += () => dragStartWidth = effectsListWidth;
+            effectsListHandle.OnDragDelta += total => { effectsListWidth = dragStartWidth - total; repackPanels(); };
 
             WidgetManager.Root.Add(layersList = new LayerList(WidgetManager, project.LayerManager)
             {
                 AnchorTarget = bottomRightLayout,
                 AnchorFrom = BoxAlignment.BottomRight,
                 AnchorTo = BoxAlignment.TopRight,
-                Offset = new Vector2(-16, 0),
+                Offset = new Vector2(-16, -SecondaryColumnReservedHeight),
+                ClipChildren = true,
             });
             layersList.OnLayerPreselect += layer =>
             {
@@ -304,14 +405,41 @@ namespace StorybrewEditor.ScreenLayers
                 else timeline.ClearHighlight();
             };
             layersList.OnLayerSelected += layer => timeline.Value = (float)layer.StartTime / 1000;
+            layersListPanel = new SlidingPanel(layersList, SlidingPanel.Side.Right);
+            RegisterSlidingPanel(layersListPanel);
+
+            layersListHandle = new ResizeHandle(WidgetManager)
+            {
+                AnchorTarget = layersList,
+                AnchorFrom = BoxAlignment.TopLeft,
+                AnchorTo = BoxAlignment.TopLeft,
+            };
+            layersList.Add(layersListHandle);
+            RegisterResizeHandle(layersListHandle);
+            layersListHandle.OnDragStart += () => dragStartWidth = layersListWidth;
+            layersListHandle.OnDragDelta += total => { layersListWidth = dragStartWidth - total; repackPanels(); };
 
             WidgetManager.Root.Add(settingsMenu = new SettingsMenu(WidgetManager, project)
             {
                 AnchorTarget = bottomRightLayout,
                 AnchorFrom = BoxAlignment.BottomRight,
                 AnchorTo = BoxAlignment.TopRight,
-                Offset = new Vector2(-16, 0),
+                Offset = new Vector2(-16, -SecondaryColumnReservedHeight),
+                ClipChildren = true,
             });
+            settingsMenuPanel = new SlidingPanel(settingsMenu, SlidingPanel.Side.Right);
+            RegisterSlidingPanel(settingsMenuPanel);
+
+            settingsMenuHandle = new ResizeHandle(WidgetManager)
+            {
+                AnchorTarget = settingsMenu,
+                AnchorFrom = BoxAlignment.TopLeft,
+                AnchorTo = BoxAlignment.TopLeft,
+            };
+            settingsMenu.Add(settingsMenuHandle);
+            RegisterResizeHandle(settingsMenuHandle);
+            settingsMenuHandle.OnDragStart += () => dragStartWidth = settingsMenuWidth;
+            settingsMenuHandle.OnDragDelta += total => { settingsMenuWidth = dragStartWidth - total; repackPanels(); };
 
             WidgetManager.Root.Add(statusLayout = new LinearLayout(WidgetManager)
             {
@@ -361,6 +489,17 @@ namespace StorybrewEditor.ScreenLayers
 
             hideUiButton.OnClick += (sender, e) => hideUi();
             screenshotButton.OnClick += (sender, e) => scheduleScreenshot(save: true);
+
+            gameplayBorderButton.OnClick += (sender, e) =>
+            {
+                var next = ((int)Program.Settings.GameplayBorderMode + 1) % 3;
+                Program.Settings.GameplayBorderMode.Set(next);
+                Program.Settings.Save();
+            };
+            Program.Settings.GameplayBorderMode.OnValueChanged += (sender, e) => applyGameplayBorderMode();
+            Program.Settings.GameplayBorderColor.OnValueChanged += (sender, e) => applyGameplayBorderColor();
+            applyGameplayBorderColor();
+            applyGameplayBorderMode();
             
             timeButton.OnClick += (sender, e) => Manager.ShowPrompt("Skip to...", value =>
             {
@@ -417,7 +556,7 @@ namespace StorybrewEditor.ScreenLayers
 
             MakeTabs(
                 new Button[] { settingsButton, effectsButton, layersButton },
-                new Widget[] { settingsMenu, effectsList, layersList });
+                new SlidingPanel[] { settingsMenuPanel, effectsListPanel, layersListPanel });
             projectFolderButton.OnClick += (sender, e) =>
             {
                 var path = Path.GetFullPath(project.ProjectFolderPath);
@@ -520,6 +659,14 @@ namespace StorybrewEditor.ScreenLayers
                             return true;
                         }
                         break;
+                    case Key.Number0:
+                    case Key.Keypad0:
+                        if (e.Control)
+                        {
+                            resetStoryboardView();
+                            return true;
+                        }
+                        break;
                 }
             }
             return base.OnKeyDown(e);
@@ -602,10 +749,10 @@ namespace StorybrewEditor.ScreenLayers
             catch (Exception e) { Manager.ShowMessage($"Failed to start ffmpeg:\n{e.Message}"); videoExportFfmpeg = null; return; }
 
             videoExportCurrentTime = videoExportStartTime;
-            videoExportEffectsWasDisplayed = effectsList.Displayed;
-            videoExportLayersWasDisplayed = layersList.Displayed;
-            videoExportSettingsWasDisplayed = settingsMenu.Displayed;
-            videoExportEffectConfigWasDisplayed = effectConfigUi.Displayed;
+            videoExportEffectsWasDisplayed = effectsListPanel.IsShown;
+            videoExportLayersWasDisplayed = layersListPanel.IsShown;
+            videoExportSettingsWasDisplayed = settingsMenuPanel.IsShown;
+            videoExportEffectConfigWasDisplayed = effectConfigPanel.IsShown;
             timeSource.Playing = false;
             isExportingVideo = true;
         }
@@ -621,10 +768,10 @@ namespace StorybrewEditor.ScreenLayers
             {
                 bottomLeftLayout.Displayed = true;
                 bottomRightLayout.Displayed = true;
-                effectsList.Displayed = videoExportEffectsWasDisplayed;
-                layersList.Displayed = videoExportLayersWasDisplayed;
-                settingsMenu.Displayed = videoExportSettingsWasDisplayed;
-                effectConfigUi.Displayed = videoExportEffectConfigWasDisplayed;
+                effectsListPanel.SetShown(videoExportEffectsWasDisplayed);
+                layersListPanel.SetShown(videoExportLayersWasDisplayed);
+                settingsMenuPanel.SetShown(videoExportSettingsWasDisplayed);
+                effectConfigPanel.SetShown(videoExportEffectConfigWasDisplayed);
                 updateStatusLayout();
             }
 
@@ -801,10 +948,21 @@ namespace StorybrewEditor.ScreenLayers
             if (totalGpuMemory >= 256)
                 warnings += $"⚠ {totalGpuMemory:0.0}MB Texture Mem. (Total)\n";
 
+            var processMemoryGb = currentProcess.WorkingSet64 / 1024.0 / 1024.0 / 1024.0;
+            if (processMemoryGb >= totalSystemMemoryGb * 0.8)
+                warnings += $"⚠ {processMemoryGb:0.1}GB Process Memory (Max Cap: {totalSystemMemoryGb:0.0}GB)\n";
+
             if (project.FrameStats.OverlappedCommands)
-                warnings += $"⚠ Overlapped Commands\n";
+            {
+                var scriptList = string.Join(", ", project.FrameStats.OverlappedScriptNames);
+                warnings += $"⚠ Overlapped Commands in: {scriptList}\n";
+            }
+
             if (project.FrameStats.IncompatibleCommands)
-                warnings += $"⚠ Incompatible Commands\n";
+            {
+                var scriptList = string.Join(", ", project.FrameStats.IncompatibleScriptNames);
+                warnings += $"⚠ Incompatible Commands in: {scriptList}\n";
+            }
 
             return warnings.TrimEnd('\n');
         }
@@ -816,25 +974,141 @@ namespace StorybrewEditor.ScreenLayers
             bottomRightLayout.Pack(440);
             bottomLeftLayout.Pack(WidgetManager.Size.X - bottomRightLayout.Width);
 
-            settingsMenu.Pack(bottomRightLayout.Width - 24, WidgetManager.Root.Height - bottomRightLayout.Height - 16);
-            effectsList.Pack(bottomRightLayout.Width - 24, WidgetManager.Root.Height - bottomRightLayout.Height - 16);
-            layersList.Pack(bottomRightLayout.Width - 24, WidgetManager.Root.Height - bottomRightLayout.Height - 16);
+            repackPanels();
+        }
 
-            effectConfigUi.Pack(bottomRightLayout.Width, WidgetManager.Root.Height - bottomLeftLayout.Height - 16);
+        private void repackPanels()
+        {
+            var maxWidth = Math.Max(MinPanelWidth, WidgetManager.Root.Width * 0.6f);
+            effectsListWidth = MathHelper.Clamp(effectsListWidth, MinPanelWidth, maxWidth);
+            layersListWidth = MathHelper.Clamp(layersListWidth, MinPanelWidth, maxWidth);
+            settingsMenuWidth = MathHelper.Clamp(settingsMenuWidth, MinPanelWidth, maxWidth);
+            effectConfigWidth = MathHelper.Clamp(effectConfigWidth, MinPanelWidth, maxWidth);
+
+            // Right-side panels sit above bottomRightLayout, with space reserved for the
+            // secondary icon column (gamepad button stacked above hideUiButton).
+            var rightHeight = WidgetManager.Root.Height - bottomRightLayout.Height - SecondaryColumnReservedHeight - 16;
+            var leftHeight = WidgetManager.Root.Height - bottomLeftLayout.Height - 16;
+
+            // Pack(w,h,w,h) forces exact size (width acts as min, maxWidth clamps).
+            settingsMenu.Pack(settingsMenuWidth, rightHeight, settingsMenuWidth, rightHeight);
+            effectsList.Pack(effectsListWidth, rightHeight, effectsListWidth, rightHeight);
+            layersList.Pack(layersListWidth, rightHeight, layersListWidth, rightHeight);
+            effectConfigUi.Pack(effectConfigWidth, leftHeight, effectConfigWidth, leftHeight);
+
             resizeStoryboard();
         }
 
         private void resizeStoryboard()
         {
             var parentSize = WidgetManager.Size;
-            if (effectConfigUi.Displayed)
+            Vector2 baseOffset;
+            if (effectConfigPanel?.IsShown ?? effectConfigUi.Displayed)
             {
-                mainStoryboardContainer.Offset = new Vector2(effectConfigUi.Bounds.Right / 2, 0);
+                baseOffset = new Vector2(effectConfigUi.Bounds.Right / 2, 0);
                 parentSize.X -= effectConfigUi.Bounds.Right;
             }
-            else mainStoryboardContainer.Offset = Vector2.Zero;
-            mainStoryboardContainer.Size = fitButton.Checked ? new Vector2(parentSize.X, (parentSize.X * 9) / 16) : parentSize;
+            else baseOffset = Vector2.Zero;
+
+            var baseSize = fitButton.Checked ? new Vector2(parentSize.X, (parentSize.X * 9) / 16) : parentSize;
+            mainStoryboardContainer.Size = baseSize * storyboardZoom;
+            mainStoryboardContainer.Offset = baseOffset + storyboardPan;
         }
+
+        #region Storyboard workspace zoom/pan
+
+        private bool onStoryboardWheel(WidgetEvent evt, MouseWheelEventArgs e)
+        {
+            var input = Manager.GetContext<Editor>().InputManager;
+            if (input.Control)
+            {
+                var ratio = e.DeltaPrecise > 0 ? StoryboardZoomStep : 1f / StoryboardZoomStep;
+                zoomStoryboardAt(ratio, WidgetManager.MousePosition);
+                return true;
+            }
+            if (input.Shift)
+            {
+                storyboardPan.X += e.DeltaPrecise * StoryboardWheelPanStep;
+                resizeStoryboard();
+                return true;
+            }
+            if (input.Alt)
+            {
+                storyboardPan.Y += e.DeltaPrecise * StoryboardWheelPanStep;
+                resizeStoryboard();
+                return true;
+            }
+            // No modifier — fall through to the screen-layer default (timeline scroll).
+            return false;
+        }
+
+        private bool onStoryboardClickDown(WidgetEvent evt, MouseButtonEventArgs e)
+        {
+            if (e.Button != MouseButton.Middle) return false;
+            isStoryboardPanning = true;
+            storyboardPanMouseAnchor = WidgetManager.MousePosition - storyboardPan;
+            return true;
+        }
+
+        private void onStoryboardClickMove(WidgetEvent evt, MouseMoveEventArgs e)
+        {
+            if (!isStoryboardPanning) return;
+            storyboardPan = WidgetManager.MousePosition - storyboardPanMouseAnchor;
+            resizeStoryboard();
+        }
+
+        private void onStoryboardClickUp(WidgetEvent evt, MouseButtonEventArgs e)
+        {
+            if (e.Button != MouseButton.Middle) return;
+            isStoryboardPanning = false;
+        }
+
+        private void zoomStoryboardAt(float ratio, Vector2 cursor)
+        {
+            var newZoom = MathHelper.Clamp(storyboardZoom * ratio, MinStoryboardZoom, MaxStoryboardZoom);
+            var actualRatio = newZoom / storyboardZoom;
+            if (actualRatio == 1f) return;
+
+            // Keep the logical point under the cursor anchored: the container is centre-anchored
+            // to Root, so its on-screen center is rootCenter + pan. Solving for the new pan
+            // that preserves (cursor - containerCenter) / (baseSize * zoom):
+            //   newPan = pan * r + (cursor - rootCenter) * (1 - r)
+            var rootCenter = WidgetManager.Root.AbsolutePosition + WidgetManager.Root.Size * 0.5f;
+            storyboardPan = storyboardPan * actualRatio + (cursor - rootCenter) * (1f - actualRatio);
+            storyboardZoom = newZoom;
+            resizeStoryboard();
+        }
+
+        private void resetStoryboardView()
+        {
+            storyboardZoom = 1f;
+            storyboardPan = Vector2.Zero;
+            resizeStoryboard();
+        }
+
+        #endregion
+
+        #region Gameplay border overlay
+
+        private void applyGameplayBorderMode()
+        {
+            var raw = (int)Program.Settings.GameplayBorderMode;
+            if (raw < 0 || raw > 2) raw = 0;
+            var mode = (GameplayBorderOverlay.BorderMode)raw;
+
+            gameplayBorderOverlay.Mode = mode;
+            gameplayBorderOverlay.Displayed = mode != GameplayBorderOverlay.BorderMode.Off;
+            gameplayBorderButton.Checked = mode != GameplayBorderOverlay.BorderMode.Off;
+            gameplayBorderButton.Tooltip =
+                $"Gameplay border: {mode}\nClick to cycle: Standard → Widescreen → Off";
+        }
+
+        private void applyGameplayBorderColor()
+        {
+            gameplayBorderOverlay.BorderColor = GameplayBorderOverlay.ParseHexColor(Program.Settings.GameplayBorderColor, Color4.Green);
+        }
+
+        #endregion
 
         private void resizeTimeline()
         {
@@ -923,14 +1197,14 @@ namespace StorybrewEditor.ScreenLayers
 
         private void hideUi()
         {
-            effectConfigWasDisplayed = effectConfigUi.Displayed;
+            effectConfigWasDisplayed = effectConfigPanel.IsShown;
             uiHidden = true;
             bottomLeftLayout.Displayed = false;
             bottomRightLayout.Displayed = false;
-            effectsList.Displayed = false;
-            layersList.Displayed = false;
-            settingsMenu.Displayed = false;
-            effectConfigUi.Displayed = false;
+            effectsListPanel.Hide();
+            layersListPanel.Hide();
+            settingsMenuPanel.Hide();
+            effectConfigPanel.Hide();
             statusLayout.Displayed = false;
             warningsLabel.Displayed = false;
             previewContainer.Displayed = false;
@@ -941,10 +1215,10 @@ namespace StorybrewEditor.ScreenLayers
             uiHidden = false;
             bottomLeftLayout.Displayed = true;
             bottomRightLayout.Displayed = true;
-            effectsList.Displayed = effectsButton.Checked;
-            layersList.Displayed = layersButton.Checked;
-            settingsMenu.Displayed = settingsButton.Checked;
-            effectConfigUi.Displayed = effectConfigWasDisplayed;
+            effectsListPanel.SetShown(effectsButton.Checked);
+            layersListPanel.SetShown(layersButton.Checked);
+            settingsMenuPanel.SetShown(settingsButton.Checked);
+            effectConfigPanel.SetShown(effectConfigWasDisplayed);
             updateStatusLayout();
         }
 
@@ -960,10 +1234,10 @@ namespace StorybrewEditor.ScreenLayers
             {
                 bottomLeftLayout.Displayed = false;
                 bottomRightLayout.Displayed = false;
-                effectsList.Displayed = false;
-                layersList.Displayed = false;
-                settingsMenu.Displayed = false;
-                effectConfigUi.Displayed = false;
+                effectsListPanel.ForceHide();
+                layersListPanel.ForceHide();
+                settingsMenuPanel.ForceHide();
+                effectConfigPanel.ForceHide();
                 statusLayout.Displayed = false;
                 warningsLabel.Displayed = false;
                 previewContainer.Displayed = false;
@@ -996,14 +1270,14 @@ namespace StorybrewEditor.ScreenLayers
             {
                 pendingScreenshot = false;
                 var save = pendingScreenshotSave;
-                var effectConfigDisplayed = effectConfigUi.Displayed;
+                var effectConfigDisplayed = effectConfigPanel.IsShown;
 
                 bottomLeftLayout.Displayed = false;
                 bottomRightLayout.Displayed = false;
-                effectsList.Displayed = false;
-                layersList.Displayed = false;
-                settingsMenu.Displayed = false;
-                effectConfigUi.Displayed = false;
+                effectsListPanel.ForceHide();
+                layersListPanel.ForceHide();
+                settingsMenuPanel.ForceHide();
+                effectConfigPanel.ForceHide();
                 statusLayout.Displayed = false;
                 warningsLabel.Displayed = false;
                 previewContainer.Displayed = false;
@@ -1015,10 +1289,10 @@ namespace StorybrewEditor.ScreenLayers
                 {
                     bottomLeftLayout.Displayed = true;
                     bottomRightLayout.Displayed = true;
-                    effectsList.Displayed = effectsButton.Checked;
-                    layersList.Displayed = layersButton.Checked;
-                    settingsMenu.Displayed = settingsButton.Checked;
-                    effectConfigUi.Displayed = effectConfigDisplayed;
+                    if (effectsButton.Checked) effectsListPanel.ForceShow();
+                    if (layersButton.Checked) layersListPanel.ForceShow();
+                    if (settingsButton.Checked) settingsMenuPanel.ForceShow();
+                    if (effectConfigDisplayed) effectConfigPanel.ForceShow();
                     updateStatusLayout();
                     GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
                     base.Draw(drawContext, tween);
@@ -1057,7 +1331,9 @@ namespace StorybrewEditor.ScreenLayers
                 var screenshotsPath = Path.Combine(project.ProjectFolderPath, "screenshots");
                 Directory.CreateDirectory(screenshotsPath);
                 var filename = $"storybrew_{DateTime.Now:yyyyMMdd-HHmmss}.png";
-                bitmap.Save(Path.Combine(screenshotsPath, filename), System.Drawing.Imaging.ImageFormat.Png);
+                var fullPath = Path.Combine(screenshotsPath, filename);
+                bitmap.Save(fullPath, System.Drawing.Imaging.ImageFormat.Png);
+                Program.Schedule(() => Manager.ShowMessage($"Screenshot saved to:\n{fullPath}"));
             }
             bitmap.Dispose();
         }

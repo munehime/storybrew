@@ -1,4 +1,3 @@
-﻿#if DEBUG
 using OpenTK;
 using StorybrewCommon.Mapset;
 
@@ -22,4 +21,3 @@ namespace StorybrewCommon.Storyboarding3d
         public abstract CameraState StateAt(double time);
     }
 }
-#endif

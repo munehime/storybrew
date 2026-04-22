@@ -37,6 +37,21 @@
 			Color: [ 0.3, 0.3, 0.3 ],
 			Outset: [2],
 		},
+		"resizeHandle":
+		{
+			_type: "NinePatch",
+			Texture: "ui-rounded-borders.png",
+			Borders: [3, 5, 5, 3],
+			Color: [0.5, 0.65, 0.9],
+		},
+		"gameplayBorder":
+		{
+			_type: "NinePatch",
+			Texture: "ui-line.png",
+			Borders: [1, 2, 2, 1],
+			Color: [0, 1, 0],
+			BordersOnly: true,
+		},
 
 		"button":
 		{

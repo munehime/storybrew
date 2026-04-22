@@ -27,6 +27,7 @@ namespace StorybrewEditor.Storyboarding
         private string videoCacheFolder;
         private double fps = 30;
         private double durationMs;
+        private double prefetchFps = 1;
         private DateTime videoFileLastWrite;
 
         private volatile bool _isPrefetching;
@@ -38,6 +39,7 @@ namespace StorybrewEditor.Storyboarding
         public bool HasVideo => videoPath != null;
         public string VideoPath => videoPath;
         public double Offset => offset;
+        public double DurationMs => durationMs;
         public bool IsPrefetching => _isPrefetching;
         public float PrefetchProgress => _prefetchProgress;
         public bool Enabled
@@ -51,8 +53,10 @@ namespace StorybrewEditor.Storyboarding
             this.projectFolderPath = projectFolderPath;
         }
 
-        public void LoadVideo(string fullPath, double startTimeMs)
+        public void LoadVideo(string fullPath, double startTimeMs, double prefetchFps = 1)
         {
+            this.prefetchFps = Math.Max(1, prefetchFps);
+
             if (!File.Exists(fullPath))
             {
                 Trace.WriteLine($"Video file not found: {fullPath}");
@@ -150,7 +154,7 @@ namespace StorybrewEditor.Storyboarding
             _isPrefetching = true;
             _prefetchProgress = 0f;
 
-            var expectedFrames = durationMs > 0 ? Math.Max(1, (int)(durationMs / 1000.0) + 1) : 0;
+            var expectedFrames = durationMs > 0 ? Math.Max(1, (int)(durationMs / 1000.0 * prefetchFps) + 1) : 0;
             var tempPattern = Path.Combine(videoCacheFolder, "prefetch_%d.png");
             try
             {
@@ -159,7 +163,7 @@ namespace StorybrewEditor.Storyboarding
                     StartInfo = new ProcessStartInfo
                     {
                         FileName = FfmpegPath,
-                        Arguments = $"-i \"{path}\" -vf fps=1 -start_number 0 -loglevel quiet -y \"{tempPattern}\"",
+                        Arguments = $"-i \"{path}\" -vf fps={prefetchFps.ToString(CultureInfo.InvariantCulture)} -start_number 0 -loglevel quiet -y \"{tempPattern}\"",
                         UseShellExecute = false,
                         CreateNoWindow = true,
                     }
@@ -187,7 +191,7 @@ namespace StorybrewEditor.Storyboarding
 
             if (IsDisposed || videoPath != path) { _isPrefetching = false; return; }
 
-            // prefetch_N.png = second N → rename to frame index N*fps (last 10% of progress)
+            // prefetch_N.png = time (N / prefetchFps) seconds → frame index N * videoFps / prefetchFps (last 10% of progress)
             var totalTemp = expectedFrames > 0 ? expectedFrames : Directory.GetFiles(videoCacheFolder, "prefetch_*.png").Length;
             for (int n = 0; ; n++)
             {
@@ -195,7 +199,7 @@ namespace StorybrewEditor.Storyboarding
                 var tempPath = Path.Combine(videoCacheFolder, $"prefetch_{n}.png");
                 if (!File.Exists(tempPath)) break;
 
-                var frameIndex = (int)(n * fps);
+                var frameIndex = (int)(n * fps / prefetchFps);
                 var finalPath = Path.Combine(videoCacheFolder, $"{frameIndex}.png");
                 try
                 {

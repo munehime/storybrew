@@ -11,6 +11,10 @@
 				Background: "previewBg",
 				Foreground: "previewFg",
 			},
+			"resizeHandle":
+			{
+				Background: "resizeHandle",
+			},
 		},
 		Label:
 		{

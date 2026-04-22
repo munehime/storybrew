@@ -1,4 +1,3 @@
-﻿#if DEBUG
 using OpenTK;
 using StorybrewCommon.Animations;
 using StorybrewCommon.Storyboarding;
@@ -23,10 +22,19 @@ namespace StorybrewCommon.Storyboarding3d
         public readonly CommandGenerator Generator = new CommandGenerator();
         public override IEnumerable<CommandGenerator> CommandGenerators { get { yield return Generator; } }
 
+        public bool IsAnimation = false;
+        public int FrameCount;
+        public double FrameDelay;
+        public OsbLoopType LoopType;
+
         public override void GenerateSprite(StoryboardSegment segment)
         {
-            sprite = sprite ?? segment.CreateSprite(SpritePath, SpriteOrigin);
+            if (!IsAnimation)
+                sprite = sprite ?? segment.CreateSprite(SpritePath, SpriteOrigin);
+            else GenerateSpriteAnimation(segment);
         }
+
+        public void GenerateSpriteAnimation(StoryboardSegment segment) => sprite = sprite ?? segment.CreateAnimation(SpritePath, FrameCount, FrameDelay, LoopType, SpriteOrigin);
 
         public override void GenerateStates(double time, CameraState cameraState, Object3dState object3dState)
         {
@@ -88,4 +96,3 @@ namespace StorybrewCommon.Storyboarding3d
         UnitY,
     }
 }
-#endif

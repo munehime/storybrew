@@ -3,7 +3,9 @@ using BrewLib.Graphics.Cameras;
 using BrewLib.ScreenLayers;
 using BrewLib.UserInterface;
 using OpenTK;
+using StorybrewEditor.UserInterface;
 using System;
+using System.Collections.Generic;
 
 namespace StorybrewEditor.ScreenLayers
 {
@@ -14,6 +16,8 @@ namespace StorybrewEditor.ScreenLayers
         protected WidgetManager WidgetManager { get; private set; }
 
         private float opacity = 0;
+        private readonly List<SlidingPanel> slidingPanels = new List<SlidingPanel>();
+        private readonly List<ResizeHandle> resizeHandles = new List<ResizeHandle>();
 
         public override void Load()
         {
@@ -43,8 +47,21 @@ namespace StorybrewEditor.ScreenLayers
                 var targetOpacity = (isTop ? 1f : 0.3f);
                 if (Math.Abs(opacity - targetOpacity) <= 0.07f) opacity = targetOpacity;
                 else opacity = MathHelper.Clamp(opacity + (opacity < targetOpacity ? 0.07f : -0.07f), 0, 1);
+
+                foreach (var panel in slidingPanels) panel.Update();
+                foreach (var handle in resizeHandles) handle.Update();
             }
             WidgetManager.Opacity = opacity * (float)TransitionProgress;
+        }
+
+        protected void RegisterSlidingPanel(SlidingPanel panel)
+        {
+            slidingPanels.Add(panel);
+        }
+
+        protected void RegisterResizeHandle(ResizeHandle handle)
+        {
+            resizeHandles.Add(handle);
         }
 
         public override void Draw(DrawContext drawContext, double tween)
@@ -53,19 +70,21 @@ namespace StorybrewEditor.ScreenLayers
             WidgetManager.Draw(drawContext);
         }
 
-        protected void MakeTabs(Button[] buttons, Widget[] widgets)
+        protected void MakeTabs(Button[] buttons, SlidingPanel[] panels)
         {
             for (var i = 0; i < buttons.Length; i++)
             {
                 var button = buttons[i];
-                var widget = widgets[i];
+                var panel = panels[i];
 
                 button.Checkable = true;
-                widget.Displayed = button.Checked;
+                if (button.Checked) panel.ForceShow();
+                else panel.ForceHide();
 
                 button.OnValueChanged += (sender, e) =>
                 {
-                    if (widget.Displayed = button.Checked)
+                    panel.SetShown(button.Checked);
+                    if (button.Checked)
                         foreach (var otherButton in buttons)
                             if (sender != otherButton) otherButton.Checked = false;
                 };

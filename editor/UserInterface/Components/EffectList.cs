@@ -137,6 +137,7 @@ namespace StorybrewEditor.UserInterface.Components
                     new LinearLayout(Manager)
                     {
                         StyleName = "condensed",
+                        FitChildren = true,
                         Children = new Widget[]
                         {
                             nameLabel = new Label(Manager)
@@ -255,12 +256,12 @@ namespace StorybrewEditor.UserInterface.Components
             editButton.OnClick += (sender, e) => openEffectEditor(ef);
             configButton.OnClick += (sender, e) =>
             {
-                if (!effectConfigUi.Displayed || effectConfigUi.Effect != ef)
+                if (!effectConfigUi.IsShown || effectConfigUi.Effect != ef)
                 {
                     effectConfigUi.Effect = ef;
-                    effectConfigUi.Displayed = true;
+                    effectConfigUi.Show();
                 }
-                else effectConfigUi.Displayed = false;
+                else effectConfigUi.Hide();
             };
             removeButton.OnClick += (sender, e) => Manager.ScreenLayerManager.ShowMessage($"Remove {ef.Name}?", () => project.Remove(ef), true);
 

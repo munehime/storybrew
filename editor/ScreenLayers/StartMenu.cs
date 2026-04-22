@@ -1,5 +1,11 @@
-﻿using BrewLib.UserInterface;
+﻿using BrewLib.Audio;
+using BrewLib.Graphics;
+using BrewLib.Graphics.Drawables;
+using BrewLib.Graphics.Textures;
+using BrewLib.UserInterface;
 using BrewLib.Util;
+using OpenTK;
+using OpenTK.Input;
 using StorybrewEditor.Storyboarding;
 using StorybrewEditor.Util;
 using System;
@@ -22,12 +28,24 @@ namespace StorybrewEditor.ScreenLayers
         private Button closeButton;
 
         private LinearLayout bottomRightLayout;
+        private Button audioButton;
+        private Button hideUiButton;
         private Button discordButton;
         private Button wikiButton;
+
+        private bool uiHidden;
 
         private LinearLayout bottomLayout;
         private Button updateButton;
         private Label versionLabel;
+
+        private Texture2d backgroundTexture;
+        private readonly Sprite backgroundSprite = new Sprite { ScaleMode = ScaleMode.Fill };
+
+        private FfmpegVideoStream backgroundVideo;
+        private AudioStream backgroundAudio;
+        private DateTime videoStartTime;
+        private static readonly string[] videoExtensions = { ".mp4", ".webm", ".mov", ".avi", ".mkv" };
 
         public override void Load()
         {
@@ -57,7 +75,6 @@ namespace StorybrewEditor.ScreenLayers
                     {
                         Text = "Preferences",
                         AnchorFrom = BoxAlignment.Centre,
-                        Disabled = true,
                     },
                     closeButton = new Button(WidgetManager)
                     {
@@ -77,6 +94,23 @@ namespace StorybrewEditor.ScreenLayers
                 Fill = true,
                 Children = new Widget[]
                 {
+                    audioButton = new Button(WidgetManager)
+                    {
+                        StyleName = "icon",
+                        Icon = IconFont.VolumeOff,
+                        Tooltip = "Menu background audio (off)",
+                        AnchorFrom = BoxAlignment.Centre,
+                        CanGrow = false,
+                        Displayed = false,
+                    },
+                    hideUiButton = new Button(WidgetManager)
+                    {
+                        StyleName = "icon",
+                        Icon = IconFont.EyeSlash,
+                        Tooltip = "Hide UI\nShortcut: F10",
+                        AnchorFrom = BoxAlignment.Centre,
+                        CanGrow = false,
+                    },
                     discordButton = new Button(WidgetManager)
                     {
                         StyleName = "small",
@@ -138,8 +172,187 @@ namespace StorybrewEditor.ScreenLayers
                 UseShellExecute = true
             });
             discordButton.OnClick += (sender, e) => Process.Start(new ProcessStartInfo() { FileName = Program.DiscordUrl, UseShellExecute = true });
+            preferencesButton.OnClick += (sender, e) => Manager.Add(new PreferencesMenu());
             closeButton.OnClick += (sender, e) => Exit();
+
+            audioButton.OnClick += (sender, e) =>
+            {
+                var enabled = !(bool)Program.Settings.MenuBackgroundAudioEnabled;
+                Program.Settings.MenuBackgroundAudioEnabled.Set(enabled);
+                Program.Settings.Save();
+            };
+
+            hideUiButton.OnClick += (sender, e) => toggleUi();
+
+            reloadBackground();
+            Program.Settings.MenuBackgroundPath.OnValueChanged += menuBackgroundChanged;
+            Program.Settings.MenuBackgroundAudioEnabled.OnValueChanged += audioEnabledChanged;
+
             checkLatestVersion();
+        }
+
+        private void audioEnabledChanged(object sender, EventArgs e) => applyAudioState();
+
+        public override bool OnKeyDown(KeyboardKeyEventArgs e)
+        {
+            if (!e.IsRepeat && e.Key == Key.F10)
+            {
+                toggleUi();
+                return true;
+            }
+            return base.OnKeyDown(e);
+        }
+
+        private void toggleUi()
+        {
+            uiHidden = !uiHidden;
+
+            mainLayout.Displayed = !uiHidden;
+            bottomRightLayout.Displayed = !uiHidden;
+            bottomLayout.Displayed = !uiHidden;
+        }
+
+        private void menuBackgroundChanged(object sender, EventArgs e) => reloadBackground();
+
+        private void reloadBackground()
+        {
+            backgroundAudio?.Dispose();
+            backgroundAudio = null;
+            backgroundTexture?.Dispose();
+            backgroundTexture = null;
+            backgroundSprite.Texture = null;
+            backgroundVideo?.Dispose();
+            backgroundVideo = null;
+
+            var path = (string)Program.Settings.MenuBackgroundPath;
+            if (!string.IsNullOrEmpty(path) && File.Exists(path))
+            {
+                var ext = Path.GetExtension(path).ToLowerInvariant();
+                if (videoExtensions.Contains(ext))
+                {
+                    backgroundVideo = new FfmpegVideoStream(path);
+                    backgroundVideo.Start();
+                    videoStartTime = DateTime.UtcNow;
+                }
+                else
+                {
+                    backgroundTexture = Texture2d.Load(path);
+                    backgroundSprite.Texture = backgroundTexture;
+                }
+            }
+
+            var hasBackground = backgroundSprite.Texture != null || backgroundVideo != null;
+            WidgetManager.Root.StyleName = hasBackground ? "" : "panel";
+
+            audioButton.Displayed = backgroundVideo != null;
+            updateAudioButtonIcon();
+            applyAudioState();
+        }
+
+        private void updateAudioButtonIcon()
+        {
+            var enabled = (bool)Program.Settings.MenuBackgroundAudioEnabled;
+            audioButton.Icon = enabled ? IconFont.VolumeUp : IconFont.VolumeOff;
+            audioButton.Tooltip = enabled ? "Menu background audio (on)" : "Menu background audio (off)";
+        }
+
+        private void applyAudioState()
+        {
+            updateAudioButtonIcon();
+
+            var wantAudio = (bool)Program.Settings.MenuBackgroundAudioEnabled && backgroundVideo != null;
+            if (!wantAudio)
+            {
+                backgroundAudio?.Dispose();
+                backgroundAudio = null;
+                return;
+            }
+
+            if (backgroundAudio != null) return;
+            backgroundVideo.EnsureAudioExtracted();
+            tryLoadBackgroundAudio();
+        }
+
+        private void tryLoadBackgroundAudio()
+        {
+            if (backgroundAudio != null || backgroundVideo == null) return;
+            if (!(bool)Program.Settings.MenuBackgroundAudioEnabled) return;
+            if (!backgroundVideo.IsAudioReady) return;
+
+            try
+            {
+                backgroundAudio = Program.AudioManager.LoadStream(backgroundVideo.AudioFilePath);
+                backgroundAudio.Loop = true;
+                backgroundAudio.Volume = 1f;
+
+                // Seek to where the video currently is in its loop so audio
+                // starts roughly aligned with the on-screen frame instead of
+                // jumping back to 0:00 each time the user toggles audio on.
+                var duration = backgroundAudio.Duration;
+                if (duration > 0)
+                {
+                    var elapsed = (DateTime.UtcNow - videoStartTime).TotalSeconds;
+                    backgroundAudio.Time = elapsed % duration;
+                }
+
+                backgroundAudio.Playing = true;
+            }
+            catch (Exception e)
+            {
+                Trace.WriteLine($"Failed to load menu background audio: {e.Message}");
+            }
+        }
+
+        public override void Draw(DrawContext drawContext, double tween)
+        {
+            // If audio was toggled on before the WAV finished extracting,
+            // pick it up the moment it's ready.
+            if (backgroundAudio == null
+                && (bool)Program.Settings.MenuBackgroundAudioEnabled
+                && backgroundVideo?.IsAudioReady == true)
+                tryLoadBackgroundAudio();
+
+            if (backgroundVideo != null)
+            {
+                var frame = backgroundVideo.UpdateAndGetTexture();
+                if (frame != null)
+                {
+                    // Video: letterbox so the whole frame is visible at its
+                    // native aspect (no edge cropping). Black bars fill any
+                    // mismatch with the window aspect.
+                    backgroundSprite.ScaleMode = ScaleMode.Fit;
+                    backgroundSprite.Texture = frame;
+                    backgroundSprite.Draw(drawContext, WidgetManager.Camera,
+                        new Box2(0, 0, WidgetManager.Size.X, WidgetManager.Size.Y),
+                        (float)TransitionProgress);
+                    backgroundSprite.Texture = null;
+                }
+            }
+            else if (backgroundSprite.Texture != null)
+            {
+                // Image: cover the whole window, cropping if aspect differs.
+                backgroundSprite.ScaleMode = ScaleMode.Fill;
+                backgroundSprite.Draw(drawContext, WidgetManager.Camera,
+                    new Box2(0, 0, WidgetManager.Size.X, WidgetManager.Size.Y),
+                    (float)TransitionProgress);
+            }
+            base.Draw(drawContext, tween);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                Program.Settings.MenuBackgroundPath.OnValueChanged -= menuBackgroundChanged;
+                Program.Settings.MenuBackgroundAudioEnabled.OnValueChanged -= audioEnabledChanged;
+                backgroundAudio?.Dispose();
+                backgroundAudio = null;
+                backgroundTexture?.Dispose();
+                backgroundTexture = null;
+                backgroundVideo?.Dispose();
+                backgroundVideo = null;
+            }
+            base.Dispose(disposing);
         }
 
         public override void Resize(int width, int height)
