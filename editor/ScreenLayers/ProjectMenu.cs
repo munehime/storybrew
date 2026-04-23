@@ -523,8 +523,20 @@ namespace StorybrewEditor.ScreenLayers
                 Program.Settings.ShowHitObjects.Set(!Program.Settings.ShowHitObjects);
                 Program.Settings.Save();
             };
-            Program.Settings.ShowHitObjects.OnValueChanged += (sender, e) => applyHitObjectsToggle();
-            Program.Settings.HitObjectSkinPath.OnValueChanged += (sender, e) => applyHitObjectsToggle();
+            // Program.Settings is a process-singleton, so raw `+=` leaks: when ProjectMenu
+            // is closed (e.g. Save + return to StartMenu), these handlers still fire on the
+            // disposed hitObjectsButton next time a setting changes. Skin-path changes in
+            // particular happen from a different screen layer (AppearancePopup), so the
+            // leak is trivial to trigger and crashes inside WidgetManager.fire with
+            // ObjectDisposedException("target"). Cache the delegates and unhook on dispose.
+            EventHandler hitObjectsSettingHandler = (sender, e) => applyHitObjectsToggle();
+            Program.Settings.ShowHitObjects.OnValueChanged += hitObjectsSettingHandler;
+            Program.Settings.HitObjectSkinPath.OnValueChanged += hitObjectsSettingHandler;
+            hitObjectsButton.OnDisposed += (sender, e) =>
+            {
+                Program.Settings.ShowHitObjects.OnValueChanged -= hitObjectsSettingHandler;
+                Program.Settings.HitObjectSkinPath.OnValueChanged -= hitObjectsSettingHandler;
+            };
             applyHitObjectsToggle();
             
             timeButton.OnClick += (sender, e) => Manager.ShowPrompt("Skip to...", value =>
