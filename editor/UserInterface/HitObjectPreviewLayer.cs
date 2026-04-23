@@ -313,14 +313,12 @@ namespace StorybrewEditor.UserInterface
             var length = slider.Length;
             if (length <= 0) return;
 
-            // Slider body half-width in screen pixels. The hit circle sprite's
-            // on-screen radius is 64 * objectDrawScale * skinTextures.Scale (because
-            // objectDrawScale already divides out the skin DPI). osu!lazer and
-            // stable both render the slider body at 80% of the hit circle diameter,
-            // so the head/tail circles visibly overlap the body's border by ~10% on
-            // each side — intentional and expected. Without the 0.8 factor the body
-            // would look "full" and the head would disappear into it.
-            var radius = 64f * objectDrawScale * skinTextures.Scale * 0.8f;
+            // Slider body half-width in screen pixels. Matches the hit-circle
+            // radius exactly (1.0× factor) so the body diameter reads the same as
+            // the head and tail. Lazer's default 0.8× convention makes the body
+            // appear ~20% narrower than hit circles, which the user found visually
+            // inconsistent — kept at 1.0× for diameter parity.
+            var radius = 64f * objectDrawScale * skinTextures.Scale;
             // Step small enough to follow curvature without visible segmentation.
             const double step = 4.0;
             var samples = Math.Max(2, (int)Math.Ceiling(length / step) + 1);
@@ -581,36 +579,36 @@ namespace StorybrewEditor.UserInterface
         private static System.Drawing.Color sliderBodyColorAt(float edge, Color4 borderColor, Color4 trackColor)
         {
             // Zone breakdown:
-            //   0.00–0.60  pure track (constant fill)
-            //   0.60–0.80  track → border gradient
-            //   0.80–0.95  pure border band
-            //   0.95–1.00  border fading to transparent (edge AA)
+            //   0.00–0.70  pure track (constant fill, wider than before so the
+            //              interior reads as solid rather than a subtle gradient)
+            //   0.70–0.85  track → border gradient
+            //   0.85–0.98  pure border band
+            //   0.98–1.00  border fading to transparent (tight 2% AA edge so the
+            //              body reads as sharp-edged, matching the hit-circle's
+            //              hard edge; wider AA made the body look "fuzzy" and
+            //              fade visibly faster than the stacked head/tail)
             // Baked alpha stays at 1.0 across track + border so the body fades in
-            // lockstep with the hit circles during the post-EndTime fadeout. The
-            // previous 0.9 track alpha (intended for a slight background bleed)
-            // caused the body to appear to fade faster than the head/tail circles
-            // because 0.9 * tintAlpha looks visibly dimmer than 1.0 * tintAlpha
-            // when tintAlpha drops below ~0.5.
+            // lockstep with the hit circles during the post-EndTime fadeout.
             float r, g, b, a;
-            if (edge < 0.60f)
+            if (edge < 0.70f)
             {
                 r = trackColor.R; g = trackColor.G; b = trackColor.B; a = 1f;
             }
-            else if (edge < 0.80f)
+            else if (edge < 0.85f)
             {
-                var t = (edge - 0.60f) / 0.20f;
+                var t = (edge - 0.70f) / 0.15f;
                 r = lerp(trackColor.R, borderColor.R, t);
                 g = lerp(trackColor.G, borderColor.G, t);
                 b = lerp(trackColor.B, borderColor.B, t);
                 a = 1f;
             }
-            else if (edge < 0.95f)
+            else if (edge < 0.98f)
             {
                 r = borderColor.R; g = borderColor.G; b = borderColor.B; a = 1f;
             }
             else
             {
-                var t = (edge - 0.95f) / 0.05f;
+                var t = (edge - 0.98f) / 0.02f;
                 r = borderColor.R; g = borderColor.G; b = borderColor.B;
                 a = 1f - t;
             }
