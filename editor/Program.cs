@@ -33,6 +33,12 @@ namespace StorybrewEditor
         public static AudioManager AudioManager { get; private set; }
         public static Settings Settings { get; private set; }
 
+        // Default location for user-installed hit-object-preview skins. Sits next to the
+        // executable as "skins/" — one absolute path the editor can always suggest when the
+        // user has never pointed HitObjectSkinPath anywhere. The folder is *not* created
+        // eagerly; we only materialize it when the user opens the folder picker.
+        public static string DefaultSkinsFolder => Path.GetFullPath("skins");
+
         private static int mainThreadId;
         public static bool IsMainThread => Thread.CurrentThread.ManagedThreadId == mainThreadId;
         public static void CheckMainThread([CallerFilePath] string callerPath = "", [CallerLineNumber] int callerLine = -1, [CallerMemberName] string callerName = "")

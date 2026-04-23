@@ -42,11 +42,12 @@ namespace StorybrewEditor.ScreenLayers
         private LinearLayout bottomRightLayout;
         private Button gameplayBorderButton;
         private GameplayBorderOverlay gameplayBorderOverlay;
+        private Button hitObjectsButton;
 
         // Vertical space reserved above bottomRightLayout for the icon column(s) stacked on
-        // top of the main row (currently just gameplayBorderButton above hideUiButton).
-        // Icon buttons are ~32px tall + 8px gap = 40px total.
-        private const float SecondaryColumnReservedHeight = 40f;
+        // top of the main row (hitObjectsButton above gameplayBorderButton above hideUiButton).
+        // Icon buttons are ~32px tall + 8px gap = 40px per row, 2 rows = 80px.
+        private const float SecondaryColumnReservedHeight = 80f;
         private Button timeButton;
         private Button divisorButton;
         private Button audioTimeFactorButton;
@@ -336,6 +337,22 @@ namespace StorybrewEditor.ScreenLayers
             // the button 8px above hideUi (overlap) instead of size.Y+8 above it.
             gameplayBorderButton.Pack();
 
+            // Hit objects preview toggle stacked one row above gameplayBorderButton. Same
+            // anchor pattern — Bottom→Top with -8 offset so the Pack()-ed (32px) button sits
+            // flush above the one below it.
+            WidgetManager.Root.Add(hitObjectsButton = new Button(WidgetManager)
+            {
+                StyleName = "icon",
+                Icon = IconFont.Bullseye,
+                Tooltip = "Show hit objects (Argon-style preview)\nConfigure skin folder under Appearance",
+                AnchorTarget = gameplayBorderButton,
+                AnchorFrom = BoxAlignment.Bottom,
+                AnchorTo = BoxAlignment.Top,
+                Offset = new Vector2(0, -8),
+                CanGrow = false,
+            });
+            hitObjectsButton.Pack();
+
             WidgetManager.Root.Add(effectConfigUi = new EffectConfigUi(WidgetManager)
             {
                 AnchorTarget = WidgetManager.Root,
@@ -500,6 +517,15 @@ namespace StorybrewEditor.ScreenLayers
             Program.Settings.GameplayBorderColor.OnValueChanged += (sender, e) => applyGameplayBorderColor();
             applyGameplayBorderColor();
             applyGameplayBorderMode();
+
+            hitObjectsButton.OnClick += (sender, e) =>
+            {
+                Program.Settings.ShowHitObjects.Set(!Program.Settings.ShowHitObjects);
+                Program.Settings.Save();
+            };
+            Program.Settings.ShowHitObjects.OnValueChanged += (sender, e) => applyHitObjectsToggle();
+            Program.Settings.HitObjectSkinPath.OnValueChanged += (sender, e) => applyHitObjectsToggle();
+            applyHitObjectsToggle();
             
             timeButton.OnClick += (sender, e) => Manager.ShowPrompt("Skip to...", value =>
             {
@@ -1106,6 +1132,33 @@ namespace StorybrewEditor.ScreenLayers
         private void applyGameplayBorderColor()
         {
             gameplayBorderOverlay.BorderColor = GameplayBorderOverlay.ParseHexColor(Program.Settings.GameplayBorderColor, Color4.Green);
+        }
+
+        #endregion
+
+        #region Hit object preview
+
+        // Phase A plumbing: the button reflects the setting and tooltip surfaces the current
+        // skin folder state. Rendering the hit objects themselves is Phase B.
+        private void applyHitObjectsToggle()
+        {
+            var enabled = (bool)Program.Settings.ShowHitObjects;
+            var skinPath = (string)Program.Settings.HitObjectSkinPath;
+            var hasSkin = !string.IsNullOrEmpty(skinPath) && Directory.Exists(skinPath);
+
+            hitObjectsButton.Checked = enabled;
+
+            if (!hasSkin)
+            {
+                hitObjectsButton.Tooltip =
+                    "Show hit objects\nNo skin selected — set a folder under Appearance";
+            }
+            else
+            {
+                var name = Path.GetFileName(skinPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                hitObjectsButton.Tooltip =
+                    $"Show hit objects: {(enabled ? "On" : "Off")}\nSkin: {name}";
+            }
         }
 
         #endregion

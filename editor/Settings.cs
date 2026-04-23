@@ -33,6 +33,12 @@ namespace StorybrewEditor
         public readonly Setting<int> GameplayBorderMode = new Setting<int>(0);
         public readonly Setting<string> GameplayBorderColor = new Setting<string>("00FF00FF");
 
+        // Hit object preview overlay: renders beatmap hit objects on the storyboard workspace
+        // using a stable-format skin folder (skin.ini + PNGs). Path is absolute; empty means
+        // no skin is selected and the toggle is inert.
+        public readonly Setting<bool> ShowHitObjects = new Setting<bool>(false);
+        public readonly Setting<string> HitObjectSkinPath = new Setting<string>("");
+
         private readonly string path;
 
         public Settings(string path = DefaultPath)
