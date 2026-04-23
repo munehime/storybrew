@@ -185,22 +185,48 @@ namespace StorybrewEditor.UserInterface
         {
             drawSliderBody(renderer, slider, objectDrawScale, alpha, storyboardScale, centerX, boundsTop);
 
-            // Tail end circle — uses sliderendcircle when present (Argon-style skins
-            // ship it), otherwise falls back to the head hitcircle so classic skins
-            // still show a capped tail.
+            // Tail circle — mirror the head's hitcircle + hitcircleoverlay pair
+            // instead of relying on sliderendcircle alone. Many Argon-style skins
+            // ship sliderendcircle.png as a transparent placeholder (lazer draws
+            // the tail procedurally), so "use sliderendcircle or fall back to
+            // hitcircle" ends up rendering nothing when the placeholder loads.
+            // Drawing hitcircle + overlay guarantees a visible tail regardless of
+            // skin; sliderendcircle then layers on top as decoration if the skin
+            // actually ships a non-trivial one.
             var tailPlayfield = slider.PlayfieldTipPosition + slider.StackOffset;
             var tailStoryboard = tailPlayfield + OsuHitObject.PlayfieldToStoryboardOffset;
             var tailScreen = storyboardToScreen(tailStoryboard, storyboardScale, centerX, boundsTop);
-
-            var endTex = skinTextures.Get("sliderendcircle") ?? skinTextures.Get("hitcircle");
-            if (endTex != null)
             {
                 var comboColor = slider.Color;
-                var tailTint = new Color4(comboColor.R, comboColor.G, comboColor.B, alpha);
-                renderer.Draw(endTex,
-                    tailScreen.X, tailScreen.Y,
-                    endTex.Width * 0.5f, endTex.Height * 0.5f,
-                    objectDrawScale, objectDrawScale, 0, tailTint);
+                var tailBodyTint = new Color4(comboColor.R, comboColor.G, comboColor.B, alpha);
+                var tailOverlayTint = new Color4(1f, 1f, 1f, alpha);
+
+                var tailBody = skinTextures.Get("hitcircle");
+                if (tailBody != null)
+                {
+                    renderer.Draw(tailBody,
+                        tailScreen.X, tailScreen.Y,
+                        tailBody.Width * 0.5f, tailBody.Height * 0.5f,
+                        objectDrawScale, objectDrawScale, 0, tailBodyTint);
+                }
+
+                var tailOverlay = skinTextures.Get("hitcircleoverlay");
+                if (tailOverlay != null)
+                {
+                    renderer.Draw(tailOverlay,
+                        tailScreen.X, tailScreen.Y,
+                        tailOverlay.Width * 0.5f, tailOverlay.Height * 0.5f,
+                        objectDrawScale, objectDrawScale, 0, tailOverlayTint);
+                }
+
+                var tailDecoration = skinTextures.Get("sliderendcircle");
+                if (tailDecoration != null)
+                {
+                    renderer.Draw(tailDecoration,
+                        tailScreen.X, tailScreen.Y,
+                        tailDecoration.Width * 0.5f, tailDecoration.Height * 0.5f,
+                        objectDrawScale, objectDrawScale, 0, tailBodyTint);
+                }
             }
 
             // Reverse arrows at repeat nodes. Every node after the first and before the
