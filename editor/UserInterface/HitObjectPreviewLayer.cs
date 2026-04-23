@@ -52,6 +52,13 @@ namespace StorybrewEditor.UserInterface
         private Texture2d sliderBodyStrip;
         private Texture2d sliderBodyCap;
 
+        // White antialiased disc used to fill hit-circle interiors. Argon-style
+        // skins ship `hitcircle.png` as a ring (transparent interior) since lazer
+        // fills it procedurally; without this disc under the ring, the slider
+        // body shows through the head/tail. Classic skins with solid hitcircles
+        // just cover the disc and look unchanged.
+        private Texture2d hitCircleFill;
+
         private bool disposedValue;
 
         public HitObjectPreviewLayer(WidgetManager manager, Project project) : base(manager)
@@ -86,6 +93,7 @@ namespace StorybrewEditor.UserInterface
             var track = skinConfig.SliderTrackOverride ?? new Color4(20 / 255f, 20 / 255f, 20 / 255f, 1f);
             sliderBodyStrip = generateSliderBodyStrip(border, track);
             sliderBodyCap = generateSliderBodyCap(border, track);
+            hitCircleFill = generateSolidDisc();
         }
 
         private void disposeBodyTextures()
@@ -94,6 +102,8 @@ namespace StorybrewEditor.UserInterface
             sliderBodyStrip = null;
             sliderBodyCap?.Dispose();
             sliderBodyCap = null;
+            hitCircleFill?.Dispose();
+            hitCircleFill = null;
         }
 
         protected override void DrawBackground(DrawContext drawContext, float actualOpacity)
@@ -200,6 +210,11 @@ namespace StorybrewEditor.UserInterface
                 var comboColor = slider.Color;
                 var tailBodyTint = new Color4(comboColor.R, comboColor.G, comboColor.B, alpha);
                 var tailOverlayTint = new Color4(1f, 1f, 1f, alpha);
+
+                // Interior fill behind the tail sprite — same reason as head: Argon
+                // hitcircle is a ring, so the slider body would show through without
+                // this filled disc underneath.
+                drawHitCircleFill(renderer, tailScreen, objectDrawScale, comboColor, alpha);
 
                 var tailBody = skinTextures.Get("hitcircle");
                 if (tailBody != null)
@@ -414,6 +429,25 @@ namespace StorybrewEditor.UserInterface
                 capScale, capScale, 0, color);
         }
 
+        // Fill the interior of a hit circle at `pos` with the combo color so the
+        // slider body (or storyboard background) doesn't show through when the
+        // skin's hitcircle sprite is a transparent ring. Scaled so the disc
+        // diameter matches the hit-circle sprite's on-screen diameter.
+        private void drawHitCircleFill(QuadRenderer renderer, Vector2 pos, float objectDrawScale, Color4 comboColor, float alpha)
+        {
+            if (hitCircleFill == null) return;
+
+            // Hit-circle sprite on-screen diameter = 128 * objectDrawScale * skinScale.
+            // Disc texture diameter = 256 (authored) → draw scale to match.
+            var onScreenDiameter = 128f * objectDrawScale * skinTextures.Scale;
+            var drawScale = onScreenDiameter / hitCircleFill.Width;
+            var fillTint = new Color4(comboColor.R, comboColor.G, comboColor.B, alpha);
+            renderer.Draw(hitCircleFill,
+                pos.X, pos.Y,
+                hitCircleFill.Width * 0.5f, hitCircleFill.Height * 0.5f,
+                drawScale, drawScale, 0, fillTint);
+        }
+
         // Miter normal for sample point `i`. Interior points use the bisector of
         // the incoming and outgoing tangent directions scaled by 1/cos(halfAngle)
         // so the strip's two sides stay at constant distance from the curve.
@@ -483,6 +517,35 @@ namespace StorybrewEditor.UserInterface
                         bitmap.SetPixel(x, y, c);
                 }
                 return Texture2d.Load(bitmap, "slider-body-strip");
+            }
+        }
+
+        // Procedural solid white disc with a soft antialiased edge, tinted at draw
+        // time to provide the interior fill of a hit circle. Sized generously
+        // (256 pixels) so even @2x hitcircle sprites sit inside without visible
+        // edge aliasing when the disc is scaled up to match.
+        private static Texture2d generateSolidDisc()
+        {
+            const int size = 256;
+            var center = (size - 1) / 2f;
+            using (var bitmap = new Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+            {
+                for (var y = 0; y < size; y++)
+                    for (var x = 0; x < size; x++)
+                    {
+                        var dx = (x - center) / center;
+                        var dy = (y - center) / center;
+                        var r = (float)Math.Sqrt(dx * dx + dy * dy);
+
+                        float a;
+                        if (r >= 1f) a = 0f;
+                        else if (r <= 0.95f) a = 1f;
+                        else a = 1f - (r - 0.95f) / 0.05f; // soft AA edge
+
+                        bitmap.SetPixel(x, y, System.Drawing.Color.FromArgb(
+                            clampByte(a * 255f), 255, 255, 255));
+                    }
+                return Texture2d.Load(bitmap, "hitcircle-fill");
             }
         }
 
@@ -680,6 +743,13 @@ namespace StorybrewEditor.UserInterface
                     objectDrawScale * approachScale, objectDrawScale * approachScale,
                     0, approachColor);
             }
+
+            // Interior fill — a procedural solid disc behind the hitcircle sprite.
+            // Needed because Argon-style skins ship hitcircle.png as a ring with a
+            // transparent interior (lazer fills it procedurally), and without this
+            // fill the slider body or storyboard background shows through. Classic
+            // skins with solid hitcircle sprites cover the fill and look unchanged.
+            drawHitCircleFill(renderer, screenPos, objectDrawScale, comboColor, alpha);
 
             // Hit circle body — tinted by combo color. Drawn below the overlay when
             // HitCircleOverlayAboveNumber is set (true for ~all stable skins).
