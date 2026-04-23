@@ -2,12 +2,15 @@ using BrewLib.Graphics;
 using BrewLib.Graphics.Renderers;
 using BrewLib.Graphics.Textures;
 using BrewLib.UserInterface;
+using BrewLib.Util;
 using OpenTK;
 using OpenTK.Graphics;
 using StorybrewCommon.Mapset;
 using StorybrewEditor.Mapset;
 using StorybrewEditor.Storyboarding;
 using System;
+using System.Drawing;
+using System.Drawing.Imaging;
 using System.IO;
 
 namespace StorybrewEditor.UserInterface
@@ -40,6 +43,15 @@ namespace StorybrewEditor.UserInterface
 
         private LegacySkinConfig skinConfig = new LegacySkinConfig();
         private LegacySkinTextures skinTextures;
+
+        // Procedural body textures — regenerated whenever the skin (and thus
+        // SliderBorder / SliderTrackOverride colors) changes. The strip is a thin
+        // vertical cross-section: border at the edges fading into a solid track
+        // interior. The cap is a disc with the same radial profile used at slider
+        // endpoints and repeat points so the strip has round joins.
+        private Texture2d sliderBodyStrip;
+        private Texture2d sliderBodyCap;
+
         private bool disposedValue;
 
         public HitObjectPreviewLayer(WidgetManager manager, Project project) : base(manager)
@@ -59,11 +71,29 @@ namespace StorybrewEditor.UserInterface
             skinTextures?.Dispose();
             skinTextures = null;
             skinConfig = new LegacySkinConfig();
+            disposeBodyTextures();
 
             if (string.IsNullOrEmpty(folderPath) || !Directory.Exists(folderPath)) return;
 
             skinConfig = LegacySkinConfig.Load(folderPath);
             skinTextures = new LegacySkinTextures(folderPath);
+
+            // Bake the body/cap textures with the skin's exact border and track
+            // colors — this avoids having to tint by two colors in the shader-less
+            // QuadRenderer pipeline. Regenerating costs one 2×64 and one 128×128
+            // bitmap per skin load; negligible.
+            var border = skinConfig.SliderBorder;
+            var track = skinConfig.SliderTrackOverride ?? new Color4(20 / 255f, 20 / 255f, 20 / 255f, 1f);
+            sliderBodyStrip = generateSliderBodyStrip(border, track);
+            sliderBodyCap = generateSliderBodyCap(border, track);
+        }
+
+        private void disposeBodyTextures()
+        {
+            sliderBodyStrip?.Dispose();
+            sliderBodyStrip = null;
+            sliderBodyCap?.Dispose();
+            sliderBodyCap = null;
         }
 
         protected override void DrawBackground(DrawContext drawContext, float actualOpacity)
@@ -180,6 +210,12 @@ namespace StorybrewEditor.UserInterface
             // points into the slider.
             drawReverseArrows(renderer, slider, time, objectDrawScale, alpha, storyboardScale, centerX, boundsTop);
 
+            // Tick markers between head and tail. Stable places these at beat
+            // fractions along the curve; we approximate using the slider's travel
+            // duration and the beatmap's SliderTickRate so the visible count
+            // matches the gameplay tick count.
+            drawSliderTicks(renderer, slider, objectDrawScale, alpha, storyboardScale, centerX, boundsTop);
+
             // Head circle draws last so it sits on top of the body sweep at StartTime.
             var headStoryboard = slider.Position + slider.StackOffset;
             var headScreen = storyboardToScreen(headStoryboard, storyboardScale, centerX, boundsTop);
@@ -222,36 +258,229 @@ namespace StorybrewEditor.UserInterface
             }
         }
 
+        // Renders the slider body as a tangent-oriented strip of quads. Each quad
+        // spans the cross-section texture edge-to-edge; neighbor quads share an
+        // edge so the border bands line up and the result is a continuous ribbon.
+        // Round caps (procedural disc) sit at both endpoints to hide the strip's
+        // square ends.
         private void drawSliderBody(QuadRenderer renderer, OsuSlider slider, float objectDrawScale, float alpha,
             float storyboardScale, float centerX, float boundsTop)
         {
-            var hitcircle = skinTextures.Get("hitcircle");
-            if (hitcircle == null) return;
+            if (sliderBodyStrip == null || sliderBodyCap == null) return;
 
-            // Track fill color — SliderTrackOverride if set, otherwise dark grey
-            // (matches the look of stable's "SliderStyle: 2" with no override).
-            var track = skinConfig.SliderTrackOverride ?? new Color4(40, 40, 40, 255);
-            var trackTint = new Color4(track.R, track.G, track.B, alpha * 0.9f);
-
-            // Step along the curve in osu!pixels. Smaller step = smoother track, more
-            // draw calls. 8px gives a visibly connected body while keeping a 500px
-            // slider under ~65 sprites.
-            const double step = 8.0;
-            var length = slider.Length;
-            var samples = Math.Max(2, (int)Math.Ceiling(length / step) + 1);
             var curve = slider.Curve;
+            var length = slider.Length;
+            if (length <= 0) return;
 
+            // Hit-circle radius in storyboard units. The strip's half-width must
+            // match this so the body visually aligns with the head/tail caps and
+            // the normal-hit circles.
+            var radius = 64f * objectDrawScale * skinTextures.Scale * 0.5f;
+            // Step small enough to follow curvature without visible segmentation.
+            const double step = 4.0;
+            var samples = Math.Max(2, (int)Math.Ceiling(length / step) + 1);
+
+            // Sample curve points once; reuse for strip + caps.
+            var points = new Vector2[samples];
             for (var i = 0; i < samples; i++)
             {
                 var progress = Math.Min(i * step, length);
                 var playfieldPos = curve.PositionAtDistance(progress) + slider.StackOffset;
                 var storyboardPos = playfieldPos + OsuHitObject.PlayfieldToStoryboardOffset;
+                points[i] = storyboardToScreen(storyboardPos, storyboardScale, centerX, boundsTop);
+            }
+
+            // White tint with slider alpha — the strip texture already bakes in the
+            // border/track colors so we only need alpha control here.
+            var color = new Color4(1f, 1f, 1f, alpha);
+
+            for (var i = 0; i < samples - 1; i++)
+            {
+                var p0 = points[i];
+                var p1 = points[i + 1];
+                var delta = p1 - p0;
+                if (delta.LengthSquared < 0.0001f) continue;
+                delta.Normalize();
+                var normal = new Vector2(-delta.Y, delta.X);
+
+                drawStripSegment(renderer, p0, p1, normal, radius, color);
+            }
+
+            // Caps fill the two end disks so the strip's square ends are hidden.
+            // Intermediate caps at each sample would smooth outer-curve gaps too,
+            // but the strip spacing is tight enough (4px) that they're imperceptible
+            // except on very high-curvature sliders.
+            drawSliderCap(renderer, points[0], radius, color);
+            drawSliderCap(renderer, points[samples - 1], radius, color);
+        }
+
+        private void drawStripSegment(QuadRenderer renderer, Vector2 p0, Vector2 p1, Vector2 normal, float halfWidth, Color4 color)
+        {
+            var offset = normal * halfWidth;
+            var p0a = p0 - offset; // "top" side of p0
+            var p0b = p0 + offset; // "bottom" side of p0
+            var p1a = p1 - offset; // "top" side of p1
+            var p1b = p1 + offset; // "bottom" side of p1
+
+            var uv = sliderBodyStrip.UvBounds;
+            var uvRatio = sliderBodyStrip.UvRatio;
+            var uLeft = uv.Left;
+            var uRight = uv.Left + sliderBodyStrip.Width * uvRatio.X;
+            var vTop = uv.Top;
+            var vBottom = uv.Top + sliderBodyStrip.Height * uvRatio.Y;
+
+            var rgba = color.ToRgba();
+
+            // Vertex order per QuadRendererExtensions: 1=top-left, 2=bot-left,
+            // 3=bot-right, 4=top-right. We map "top" of the quad to V=0 (one
+            // border edge of the cross-section) and "bottom" to V=1 (other edge).
+            var primitive = new QuadPrimitive
+            {
+                x1 = p0a.X, y1 = p0a.Y, u1 = uLeft,  v1 = vTop,    color1 = rgba,
+                x2 = p0b.X, y2 = p0b.Y, u2 = uLeft,  v2 = vBottom, color2 = rgba,
+                x3 = p1b.X, y3 = p1b.Y, u3 = uRight, v3 = vBottom, color3 = rgba,
+                x4 = p1a.X, y4 = p1a.Y, u4 = uRight, v4 = vTop,    color4 = rgba,
+            };
+
+            renderer.Draw(ref primitive, sliderBodyStrip);
+        }
+
+        private void drawSliderCap(QuadRenderer renderer, Vector2 pos, float radius, Color4 color)
+        {
+            // Cap texture is 128×128; we draw it scaled so its visible radius matches
+            // the strip's half-width, giving a seamless joint with no visible seam
+            // on either endpoint.
+            var capScale = (radius * 2f) / sliderBodyCap.Width;
+            renderer.Draw(sliderBodyCap,
+                pos.X, pos.Y,
+                sliderBodyCap.Width * 0.5f, sliderBodyCap.Height * 0.5f,
+                capScale, capScale, 0, color);
+        }
+
+        // Procedural cross-section. V=0/1 are pure border; V≈0.5 is track. Soft
+        // gradients at the border↔track transition hide aliasing at curve bends.
+        private static Texture2d generateSliderBodyStrip(Color4 borderColor, Color4 trackColor)
+        {
+            const int width = 2;
+            const int height = 128;
+            using (var bitmap = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+            {
+                for (var y = 0; y < height; y++)
+                {
+                    var v = (y + 0.5f) / height;
+                    var edge = Math.Abs(v - 0.5f) * 2f; // 0 at center, 1 at edges
+                    var c = sliderBodyColorAt(edge, borderColor, trackColor);
+                    for (var x = 0; x < width; x++)
+                        bitmap.SetPixel(x, y, c);
+                }
+                return Texture2d.Load(bitmap, "slider-body-strip");
+            }
+        }
+
+        // Procedural disc that matches the strip's radial profile — used as a cap
+        // at slider endpoints so the strip's square ends blend away.
+        private static Texture2d generateSliderBodyCap(Color4 borderColor, Color4 trackColor)
+        {
+            const int size = 128;
+            var center = (size - 1) / 2f;
+            using (var bitmap = new Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+            {
+                for (var y = 0; y < size; y++)
+                    for (var x = 0; x < size; x++)
+                    {
+                        var dx = (x - center) / center;
+                        var dy = (y - center) / center;
+                        var r = (float)Math.Sqrt(dx * dx + dy * dy);
+
+                        if (r >= 1f)
+                        {
+                            bitmap.SetPixel(x, y, System.Drawing.Color.FromArgb(0, 0, 0, 0));
+                            continue;
+                        }
+                        bitmap.SetPixel(x, y, sliderBodyColorAt(r, borderColor, trackColor));
+                    }
+                return Texture2d.Load(bitmap, "slider-body-cap");
+            }
+        }
+
+        // Shared color function for both textures. Input is 0 (center) to 1 (edge).
+        // Produces a dark track with soft gradient into a lighter border band, then
+        // a narrow fade to transparent at the very edge for antialiasing.
+        private static System.Drawing.Color sliderBodyColorAt(float edge, Color4 borderColor, Color4 trackColor)
+        {
+            // Zone breakdown:
+            //   0.00–0.60  pure track (constant fill)
+            //   0.60–0.80  track → border gradient
+            //   0.80–0.95  pure border band
+            //   0.95–1.00  border fading to transparent (edge AA)
+            float r, g, b, a;
+            if (edge < 0.60f)
+            {
+                r = trackColor.R; g = trackColor.G; b = trackColor.B; a = 0.9f;
+            }
+            else if (edge < 0.80f)
+            {
+                var t = (edge - 0.60f) / 0.20f;
+                r = lerp(trackColor.R, borderColor.R, t);
+                g = lerp(trackColor.G, borderColor.G, t);
+                b = lerp(trackColor.B, borderColor.B, t);
+                a = lerp(0.9f, 1f, t);
+            }
+            else if (edge < 0.95f)
+            {
+                r = borderColor.R; g = borderColor.G; b = borderColor.B; a = 1f;
+            }
+            else
+            {
+                var t = (edge - 0.95f) / 0.05f;
+                r = borderColor.R; g = borderColor.G; b = borderColor.B;
+                a = 1f - t;
+            }
+            return System.Drawing.Color.FromArgb(
+                clampByte(a * 255f),
+                clampByte(r * 255f),
+                clampByte(g * 255f),
+                clampByte(b * 255f));
+        }
+
+        private static float lerp(float a, float b, float t) => a + (b - a) * t;
+        private static int clampByte(float f) => f < 0 ? 0 : f > 255 ? 255 : (int)(f + 0.5f);
+
+        // Tick markers along the slider body at beat-fraction intervals, with
+        // endpoints (head & tail) skipped per stable's convention. Tick spacing
+        // uses beatmap.SliderTickRate (ticks per beat); tick count within a single
+        // travel is floor(TravelDurationBeats * tickRate) − 1 (for the endpoint).
+        private void drawSliderTicks(QuadRenderer renderer, OsuSlider slider,
+            float objectDrawScale, float alpha, float storyboardScale, float centerX, float boundsTop)
+        {
+            var tick = skinTextures.Get("sliderscorepoint");
+            if (tick == null) return;
+
+            var beatmap = project.MainBeatmap;
+            if (beatmap == null) return;
+
+            var tickRate = beatmap.SliderTickRate;
+            if (tickRate <= 0) return;
+
+            var travelBeats = slider.TravelDurationBeats;
+            if (travelBeats <= 0 || slider.Length <= 0) return;
+
+            var tickInterval = 1.0 / tickRate; // beats between ticks
+            var tint = new Color4(1f, 1f, 1f, alpha);
+
+            for (var tickBeat = tickInterval; tickBeat < travelBeats - 0.001; tickBeat += tickInterval)
+            {
+                var progress = tickBeat / travelBeats;
+                var distance = progress * slider.Length;
+
+                var playfieldPos = slider.Curve.PositionAtDistance(distance) + slider.StackOffset;
+                var storyboardPos = playfieldPos + OsuHitObject.PlayfieldToStoryboardOffset;
                 var screenPos = storyboardToScreen(storyboardPos, storyboardScale, centerX, boundsTop);
 
-                renderer.Draw(hitcircle,
+                renderer.Draw(tick,
                     screenPos.X, screenPos.Y,
-                    hitcircle.Width * 0.5f, hitcircle.Height * 0.5f,
-                    objectDrawScale, objectDrawScale, 0, trackTint);
+                    tick.Width * 0.5f, tick.Height * 0.5f,
+                    objectDrawScale, objectDrawScale, 0, tint);
             }
         }
 
@@ -496,6 +725,7 @@ namespace StorybrewEditor.UserInterface
                 {
                     skinTextures?.Dispose();
                     skinTextures = null;
+                    disposeBodyTextures();
                 }
                 disposedValue = true;
             }
