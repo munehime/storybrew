@@ -267,12 +267,21 @@ namespace StorybrewEditor.UserInterface
             // result of standard alpha blending into a cleared buffer. Tint color is
             // (α, α, α, α) so the tint scales *both* the rgb (keeping the premult
             // relationship) and the alpha.
+            //
+            // scaleY = -1 flips the texture's V-coordinate during sampling without
+            // affecting the quad's world position. Needed because: rendering with a
+            // yDown camera writes world Y=0 to framebuffer memory Y=fboH (the "top"
+            // row in GL's bottom-origin convention), but texture sampling with
+            // default UVs treats V=0 as memory Y=0 (= world Y=fboH, the bottom of
+            // our content). Without this flip the composite shows the slider upside
+            // down, which reads as inverted positions, mirrored digits, and the
+            // head/tail appearing swapped.
             var compositeRenderer = DrawState.Prepare(drawContext.Get<QuadRenderer>(), Manager.Camera, sliderCompositeStates);
             var tint = new Color4(alpha, alpha, alpha, alpha);
             compositeRenderer.Draw(sliderFbo.Texture,
                 bounds.Left + bounds.Width * 0.5f, bounds.Top + bounds.Height * 0.5f,
                 sliderFbo.Texture.Width * 0.5f, sliderFbo.Texture.Height * 0.5f,
-                1f, 1f, 0, tint);
+                1f, -1f, 0, tint);
 
             // Restore default blend mode so subsequent hit objects composite normally.
             DrawState.Prepare(drawContext.Get<QuadRenderer>(), Manager.Camera, renderStates);
