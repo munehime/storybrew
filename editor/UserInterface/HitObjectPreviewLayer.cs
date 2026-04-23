@@ -1,5 +1,7 @@
 using BrewLib.Graphics;
+using BrewLib.Graphics.Cameras;
 using BrewLib.Graphics.Renderers;
+using BrewLib.Graphics.RenderTargets;
 using BrewLib.Graphics.Textures;
 using BrewLib.UserInterface;
 using BrewLib.Util;
@@ -58,6 +60,21 @@ namespace StorybrewEditor.UserInterface
         // body shows through the head/tail. Classic skins with solid hitcircles
         // just cover the disc and look unchanged.
         private Texture2d hitCircleFill;
+
+        // Per-slider render target. Each visible slider renders its full shape
+        // (body + head + tail + ticks + reverse arrows + ball) into this FBO at
+        // full alpha in one pass, then the FBO texture composites onto the main
+        // framebuffer at the slider's actual alpha in a single draw call. Single
+        // composite = single layer of alpha = no stacking, so the whole slider
+        // fades uniformly regardless of how many sub-sprites contributed to it.
+        // The FBO resizes to follow the widget's bounds and is shared across all
+        // sliders in the frame (cleared between each).
+        private RenderTarget sliderFbo;
+        private CameraOrtho sliderFboCamera;
+        private readonly RenderStates sliderCompositeStates = new RenderStates
+        {
+            BlendingFactor = new BlendingFactorState(BlendingMode.Premultiplied),
+        };
 
         private bool disposedValue;
 
@@ -138,24 +155,48 @@ namespace StorybrewEditor.UserInterface
 
             var renderer = DrawState.Prepare(drawContext.Get<QuadRenderer>(), Manager.Camera, renderStates);
 
+            // Ensure the slider FBO matches the current bounds. Resizing involves
+            // reallocating a Texture2d so this is a cheap no-op on unchanged size.
+            ensureSliderFbo((int)Math.Ceiling(bounds.Width), (int)Math.Ceiling(bounds.Height));
+
             // Iterate in reverse so earlier hit objects paint on top of later ones
             // (matches osu!'s reverse-chronological stacking convention).
             var hitObjects = beatmap.HitObjects as System.Collections.Generic.IList<OsuHitObject>;
             if (hitObjects != null)
             {
                 for (var i = hitObjects.Count - 1; i >= 0; i--)
-                    drawHitObject(renderer, hitObjects[i], time, preempt, fadeIn, storyboardScale, centerX, bounds.Top, objectDrawScale, actualOpacity);
+                    drawHitObject(drawContext, renderer, hitObjects[i], time, preempt, fadeIn, storyboardScale, centerX, bounds, objectDrawScale, actualOpacity);
             }
             else
             {
                 // IEnumerable fallback — still correct, just forward-ordered.
                 foreach (var h in beatmap.HitObjects)
-                    drawHitObject(renderer, h, time, preempt, fadeIn, storyboardScale, centerX, bounds.Top, objectDrawScale, actualOpacity);
+                    drawHitObject(drawContext, renderer, h, time, preempt, fadeIn, storyboardScale, centerX, bounds, objectDrawScale, actualOpacity);
             }
         }
 
-        private void drawHitObject(QuadRenderer renderer, OsuHitObject h, double time, double preempt, double fadeIn,
-            float storyboardScale, float centerX, float boundsTop, float objectDrawScale, float actualOpacity)
+        private void ensureSliderFbo(int width, int height)
+        {
+            if (width <= 0 || height <= 0) return;
+
+            if (sliderFbo == null)
+            {
+                sliderFbo = new RenderTarget(width, height);
+                sliderFboCamera = new CameraOrtho();
+            }
+            else if (sliderFbo.Width != width || sliderFbo.Height != height)
+            {
+                sliderFbo.Width = width;
+                sliderFbo.Height = height;
+            }
+
+            // Camera viewport matches FBO pixel dimensions — 1:1 pixel mapping, no
+            // virtual-width scaling. Ortho projection covers (0..width, 0..height).
+            sliderFboCamera.Viewport = new System.Drawing.Rectangle(0, 0, width, height);
+        }
+
+        private void drawHitObject(DrawContext drawContext, QuadRenderer renderer, OsuHitObject h, double time, double preempt, double fadeIn,
+            float storyboardScale, float centerX, Box2 bounds, float objectDrawScale, float actualOpacity)
         {
             var visibleStart = h.StartTime - preempt;
             var visibleEnd = h.EndTime + FadeOutDuration;
@@ -169,7 +210,7 @@ namespace StorybrewEditor.UserInterface
             // Apply stack offset — for stacked notes osu! shifts each note up-left by
             // radius/10 per stack level. StackOffset is pre-computed on the beatmap.
             var storyboardPos = h.Position + h.StackOffset;
-            var screenPos = storyboardToScreen(storyboardPos, storyboardScale, centerX, boundsTop);
+            var screenPos = storyboardToScreen(storyboardPos, storyboardScale, centerX, bounds.Top);
 
             if (h is OsuSpinner spinner)
             {
@@ -179,12 +220,62 @@ namespace StorybrewEditor.UserInterface
 
             if (h is OsuSlider slider)
             {
-                drawSlider(renderer, slider, time, preempt, objectDrawScale, finalAlpha,
-                    storyboardScale, centerX, boundsTop);
+                drawSliderViaFbo(drawContext, renderer, slider, time, preempt, objectDrawScale, finalAlpha,
+                    storyboardScale, centerX, bounds);
                 return;
             }
 
             drawCircle(renderer, h, screenPos, objectDrawScale, finalAlpha, time, preempt);
+        }
+
+        // Render the complete slider shape into the shared FBO at α=1, then
+        // composite that single texture onto the main framebuffer at the
+        // slider's actual alpha. Eliminates per-sub-sprite stacking so the
+        // whole slider fades uniformly.
+        private void drawSliderViaFbo(DrawContext drawContext, QuadRenderer screenRenderer, OsuSlider slider,
+            double time, double preempt, float objectDrawScale, float alpha,
+            float storyboardScale, float centerX, Box2 bounds)
+        {
+            if (sliderFbo == null)
+            {
+                // Fallback: draw directly if FBO allocation failed. Will look slightly
+                // off during fade but still shows the slider.
+                drawSlider(screenRenderer, slider, time, preempt, objectDrawScale, alpha,
+                    storyboardScale, centerX, bounds.Top);
+                return;
+            }
+
+            // --- Pass 1: render slider components into FBO at α=1 ---------------
+            // Flushes pending screen-renderer draws and binds the FBO.
+            sliderFbo.Begin(clear: true);
+
+            var fboRenderer = DrawState.Prepare(drawContext.Get<QuadRenderer>(), sliderFboCamera, renderStates);
+            // Translate world coords (still expressed in widget/screen space) into
+            // FBO-local space so drawSlider's existing helpers don't need to know
+            // they're rendering into an FBO.
+            fboRenderer.TransformMatrix = Matrix4.CreateTranslation(-bounds.Left, -bounds.Top, 0);
+
+            drawSlider(fboRenderer, slider, time, preempt, objectDrawScale, 1f,
+                storyboardScale, centerX, bounds.Top);
+
+            fboRenderer.TransformMatrix = Matrix4.Identity;
+            sliderFbo.End();
+
+            // --- Pass 2: composite FBO texture onto screen at slider α ----------
+            // Premultiplied blend (src=One, dst=OneMinusSrcAlpha) is required because
+            // the FBO's stored pixels are already premultiplied — that's the natural
+            // result of standard alpha blending into a cleared buffer. Tint color is
+            // (α, α, α, α) so the tint scales *both* the rgb (keeping the premult
+            // relationship) and the alpha.
+            var compositeRenderer = DrawState.Prepare(drawContext.Get<QuadRenderer>(), Manager.Camera, sliderCompositeStates);
+            var tint = new Color4(alpha, alpha, alpha, alpha);
+            compositeRenderer.Draw(sliderFbo.Texture,
+                bounds.Left + bounds.Width * 0.5f, bounds.Top + bounds.Height * 0.5f,
+                sliderFbo.Texture.Width * 0.5f, sliderFbo.Texture.Height * 0.5f,
+                1f, 1f, 0, tint);
+
+            // Restore default blend mode so subsequent hit objects composite normally.
+            DrawState.Prepare(drawContext.Get<QuadRenderer>(), Manager.Camera, renderStates);
         }
 
         // Body-first, head-last, tail/ball on top. The body sweep writes over itself —
@@ -909,6 +1000,8 @@ namespace StorybrewEditor.UserInterface
                     skinTextures?.Dispose();
                     skinTextures = null;
                     disposeBodyTextures();
+                    sliderFbo?.Dispose();
+                    sliderFbo = null;
                 }
                 disposedValue = true;
             }
