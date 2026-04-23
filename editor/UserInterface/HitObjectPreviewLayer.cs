@@ -272,10 +272,14 @@ namespace StorybrewEditor.UserInterface
             var length = slider.Length;
             if (length <= 0) return;
 
-            // Hit-circle radius in storyboard units. The strip's half-width must
-            // match this so the body visually aligns with the head/tail caps and
-            // the normal-hit circles.
-            var radius = 64f * objectDrawScale * skinTextures.Scale * 0.5f;
+            // Slider body half-width in screen pixels. The hit circle sprite's
+            // on-screen radius is 64 * objectDrawScale * skinTextures.Scale (because
+            // objectDrawScale already divides out the skin DPI). osu!lazer and
+            // stable both render the slider body at 80% of the hit circle diameter,
+            // so the head/tail circles visibly overlap the body's border by ~10% on
+            // each side — intentional and expected. Without the 0.8 factor the body
+            // would look "full" and the head would disappear into it.
+            var radius = 64f * objectDrawScale * skinTextures.Scale * 0.8f;
             // Step small enough to follow curvature without visible segmentation.
             const double step = 4.0;
             var samples = Math.Max(2, (int)Math.Ceiling(length / step) + 1);
