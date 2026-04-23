@@ -326,10 +326,19 @@ namespace StorybrewEditor.UserInterface
                 drawStripSegment(renderer, points[i], points[i + 1], normals[i], normals[i + 1], radius, color);
             }
 
-            // Endpoint caps hide the strip's square edges. Extra caps at clamped
-            // corners hide the pinch introduced when miter correction was skipped.
-            drawSliderCap(renderer, points[0], radius, color);
-            drawSliderCap(renderer, points[samples - 1], radius, color);
+            // Endpoint caps would be redundant here: strip half-width is 0.8× the
+            // hit-circle radius, so the strip's square ends at head/tail always
+            // sit well inside the head hit-circle (and tail sliderendcircle)
+            // coverage. Drawing explicit caps on top stacks three alpha layers at
+            // those spots (strip + cap + circle), which during fade-out makes the
+            // body appear to linger visibly longer than the unstacked interior —
+            // users perceive it as "body fading later than head/tail". Dropping
+            // the endpoint caps leaves the strip seamlessly covered by the
+            // circles while keeping the body interior single-layered, so the
+            // whole slider fades in one pass.
+            //
+            // Sharp-corner caps are kept because no circle covers a mid-body
+            // corner; without them the inner-curve pinch would be visible.
             if (sharpCorners != null)
                 foreach (var idx in sharpCorners)
                     drawSliderCap(renderer, points[idx], radius, color);
