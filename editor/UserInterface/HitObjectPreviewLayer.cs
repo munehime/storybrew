@@ -298,16 +298,22 @@ namespace StorybrewEditor.UserInterface
             // border/track colors so we only need alpha control here.
             var color = new Color4(1f, 1f, 1f, alpha);
 
+            // Precompute miter normals — one per sample point, shared between the
+            // two quads that meet at that point. Without this, each quad uses its
+            // own tangent and adjacent quads have non-matching corner positions at
+            // their junction, leaving visible seams across the slider body on
+            // curved sections. The bisector normal scaled by 1/cos(halfAngle)
+            // keeps the strip width constant along curves; we clamp the cosine to
+            // avoid arbitrarily long miter spikes at very sharp angles.
+            var normals = new Vector2[samples];
+            for (var i = 0; i < samples; i++)
+                normals[i] = computeMiterNormal(points, i);
+
             for (var i = 0; i < samples - 1; i++)
             {
-                var p0 = points[i];
-                var p1 = points[i + 1];
-                var delta = p1 - p0;
+                var delta = points[i + 1] - points[i];
                 if (delta.LengthSquared < 0.0001f) continue;
-                delta.Normalize();
-                var normal = new Vector2(-delta.Y, delta.X);
-
-                drawStripSegment(renderer, p0, p1, normal, radius, color);
+                drawStripSegment(renderer, points[i], points[i + 1], normals[i], normals[i + 1], radius, color);
             }
 
             // Caps fill the two end disks so the strip's square ends are hidden.
@@ -318,13 +324,14 @@ namespace StorybrewEditor.UserInterface
             drawSliderCap(renderer, points[samples - 1], radius, color);
         }
 
-        private void drawStripSegment(QuadRenderer renderer, Vector2 p0, Vector2 p1, Vector2 normal, float halfWidth, Color4 color)
+        private void drawStripSegment(QuadRenderer renderer, Vector2 p0, Vector2 p1, Vector2 n0, Vector2 n1, float halfWidth, Color4 color)
         {
-            var offset = normal * halfWidth;
-            var p0a = p0 - offset; // "top" side of p0
-            var p0b = p0 + offset; // "bottom" side of p0
-            var p1a = p1 - offset; // "top" side of p1
-            var p1b = p1 + offset; // "bottom" side of p1
+            var off0 = n0 * halfWidth;
+            var off1 = n1 * halfWidth;
+            var p0a = p0 - off0; // "top" side of p0 (miter-joined with previous segment)
+            var p0b = p0 + off0; // "bottom" side of p0
+            var p1a = p1 - off1; // "top" side of p1 (miter-joined with next segment)
+            var p1b = p1 + off1; // "bottom" side of p1
 
             var uv = sliderBodyStrip.UvBounds;
             var uvRatio = sliderBodyStrip.UvRatio;
@@ -359,6 +366,57 @@ namespace StorybrewEditor.UserInterface
                 pos.X, pos.Y,
                 sliderBodyCap.Width * 0.5f, sliderBodyCap.Height * 0.5f,
                 capScale, capScale, 0, color);
+        }
+
+        // Miter normal for sample point `i`. Interior points use the bisector of
+        // the incoming and outgoing tangent directions scaled by 1/cos(halfAngle)
+        // so that the strip's two sides stay at constant distance from the curve.
+        // Endpoints degenerate to the adjacent segment's perpendicular normal.
+        // Miter length clamped at 1 / MinCosHalfAngle to avoid spike artifacts on
+        // very sharp bends (kick-slider tips); past that threshold we fall back
+        // to the un-scaled bisector, which pinches slightly but never spikes.
+        private const float MinCosHalfAngle = 0.2f;
+
+        private static Vector2 computeMiterNormal(Vector2[] points, int i)
+        {
+            var count = points.Length;
+            if (count < 2) return new Vector2(0, 1);
+
+            Vector2 tangent;
+            Vector2 tIn = Vector2.Zero, tOut = Vector2.Zero;
+
+            if (i == 0)
+            {
+                tangent = points[1] - points[0];
+            }
+            else if (i == count - 1)
+            {
+                tangent = points[count - 1] - points[count - 2];
+            }
+            else
+            {
+                tIn = points[i] - points[i - 1];
+                tOut = points[i + 1] - points[i];
+                if (tIn.LengthSquared > 0.0001f) tIn.Normalize();
+                if (tOut.LengthSquared > 0.0001f) tOut.Normalize();
+                tangent = tIn + tOut;
+            }
+            if (tangent.LengthSquared > 0.0001f) tangent.Normalize();
+            else tangent = new Vector2(1, 0);
+
+            // Normal is the 90° CCW rotation of the tangent.
+            var normal = new Vector2(-tangent.Y, tangent.X);
+
+            // Miter-length correction — keep the strip's perpendicular width constant
+            // even when the curve bends. Skip at endpoints (no correction needed) and
+            // at sharp bends where the correction would spike.
+            if (i > 0 && i < count - 1)
+            {
+                var cosHalf = Vector2.Dot(tIn, tangent);
+                if (cosHalf > MinCosHalfAngle)
+                    normal /= cosHalf;
+            }
+            return normal;
         }
 
         // Procedural cross-section. V=0/1 are pure border; V≈0.5 is track. Soft
