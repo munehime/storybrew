@@ -89,10 +89,11 @@ namespace StorybrewEditor.UserInterface
             var preempt = Beatmap.GetDifficultyRange(beatmap.ApproachRate, 1800, 1200, 450);
             var fadeIn = Beatmap.GetDifficultyRange(beatmap.ApproachRate, 1200, 800, 300);
 
-            // Stable's CS→scale curve. Multiplier applies to the 128-osu!px baseline
-            // sprite size; we divide by the skin's DPI so a 256px @2x image renders
-            // at the same on-screen size as a 128px @1x.
-            var csMultiplier = 1f - 0.7f * ((float)beatmap.CircleSize - 5f) / 5f;
+            // User-tuned CS→scale curve. Steeper than stable's and inverts past CS=7.5;
+            // meant for the common CS 3-7 range where it produces visually matched sizes
+            // against the Argon reference. Callers using maps with CS >= 7.5 should
+            // expect flipped sprites until this curve is revisited.
+            var csMultiplier = 0.5f - 1f * ((float)beatmap.CircleSize - 5f) / 5f;
             var objectDrawScale = csMultiplier * storyboardScale / skinTextures.Scale;
 
             var renderer = DrawState.Prepare(drawContext.Get<QuadRenderer>(), Manager.Camera, renderStates);
@@ -136,9 +137,183 @@ namespace StorybrewEditor.UserInterface
                 return;
             }
 
-            // Sliders are Phase C — for now draw them as if they were circles at the
-            // head position. The head is still useful context for timing review.
+            if (h is OsuSlider slider)
+            {
+                drawSlider(renderer, slider, time, preempt, objectDrawScale, finalAlpha,
+                    storyboardScale, centerX, boundsTop);
+                return;
+            }
+
             drawCircle(renderer, h, screenPos, objectDrawScale, finalAlpha, time, preempt);
+        }
+
+        // Body-first, head-last, tail/ball on top. The body sweep writes over itself —
+        // that's fine because the tint is constant along the length, so overlap just
+        // produces a clean solid track.
+        private void drawSlider(QuadRenderer renderer, OsuSlider slider, double time, double preempt,
+            float objectDrawScale, float alpha, float storyboardScale, float centerX, float boundsTop)
+        {
+            drawSliderBody(renderer, slider, objectDrawScale, alpha, storyboardScale, centerX, boundsTop);
+
+            // Tail end circle — uses sliderendcircle when present (Argon-style skins
+            // ship it), otherwise falls back to the head hitcircle so classic skins
+            // still show a capped tail.
+            var tailPlayfield = slider.PlayfieldTipPosition + slider.StackOffset;
+            var tailStoryboard = tailPlayfield + OsuHitObject.PlayfieldToStoryboardOffset;
+            var tailScreen = storyboardToScreen(tailStoryboard, storyboardScale, centerX, boundsTop);
+
+            var endTex = skinTextures.Get("sliderendcircle") ?? skinTextures.Get("hitcircle");
+            if (endTex != null)
+            {
+                var comboColor = slider.Color;
+                var tailTint = new Color4(comboColor.R, comboColor.G, comboColor.B, alpha);
+                renderer.Draw(endTex,
+                    tailScreen.X, tailScreen.Y,
+                    endTex.Width * 0.5f, endTex.Height * 0.5f,
+                    objectDrawScale, objectDrawScale, 0, tailTint);
+            }
+
+            // Reverse arrows at repeat nodes. Every node after the first and before the
+            // last is a repeat point; on even-indexed repeats the arrow sits at the
+            // head (pointing to tail), on odd at the tail (pointing to head). Rotation
+            // derived from the curve tangent at the endpoint so the arrow visually
+            // points into the slider.
+            drawReverseArrows(renderer, slider, time, objectDrawScale, alpha, storyboardScale, centerX, boundsTop);
+
+            // Head circle draws last so it sits on top of the body sweep at StartTime.
+            var headStoryboard = slider.Position + slider.StackOffset;
+            var headScreen = storyboardToScreen(headStoryboard, storyboardScale, centerX, boundsTop);
+            drawCircle(renderer, slider, headScreen, objectDrawScale, alpha, time, preempt);
+
+            // Active ball + follow circle — only while the ball is traveling. After
+            // the slider ends the ball sprite vanishes and we let the head's fade-out
+            // animation carry the final visual cue.
+            if (time >= slider.StartTime && time <= slider.EndTime)
+            {
+                var ballPlayfield = slider.PlayfieldPositionAtTime(time) + slider.StackOffset;
+                var ballStoryboard = ballPlayfield + OsuHitObject.PlayfieldToStoryboardOffset;
+                var ballScreen = storyboardToScreen(ballStoryboard, storyboardScale, centerX, boundsTop);
+
+                var follow = skinTextures.Get("sliderfollowcircle");
+                if (follow != null)
+                {
+                    // Follow circle grows slightly as the ball hits — clamp to 1.2×
+                    // so it doesn't swallow nearby hit objects on small-CS maps.
+                    var followTint = new Color4(1f, 1f, 1f, alpha);
+                    renderer.Draw(follow,
+                        ballScreen.X, ballScreen.Y,
+                        follow.Width * 0.5f, follow.Height * 0.5f,
+                        objectDrawScale * 1.2f, objectDrawScale * 1.2f, 0, followTint);
+                }
+
+                var ball = skinTextures.Get("sliderb0") ?? skinTextures.Get("sliderb");
+                if (ball != null)
+                {
+                    // Stable tints the ball with combo color only when AllowSliderBallTint=1.
+                    // Otherwise draws white (textured sliderb has colour baked in).
+                    var ballColor = skinConfig.AllowSliderBallTint
+                        ? new Color4(slider.Color.R, slider.Color.G, slider.Color.B, alpha)
+                        : new Color4(1f, 1f, 1f, alpha);
+                    renderer.Draw(ball,
+                        ballScreen.X, ballScreen.Y,
+                        ball.Width * 0.5f, ball.Height * 0.5f,
+                        objectDrawScale, objectDrawScale, 0, ballColor);
+                }
+            }
+        }
+
+        private void drawSliderBody(QuadRenderer renderer, OsuSlider slider, float objectDrawScale, float alpha,
+            float storyboardScale, float centerX, float boundsTop)
+        {
+            var hitcircle = skinTextures.Get("hitcircle");
+            if (hitcircle == null) return;
+
+            // Track fill color — SliderTrackOverride if set, otherwise dark grey
+            // (matches the look of stable's "SliderStyle: 2" with no override).
+            var track = skinConfig.SliderTrackOverride ?? new Color4(40, 40, 40, 255);
+            var trackTint = new Color4(track.R, track.G, track.B, alpha * 0.9f);
+
+            // Step along the curve in osu!pixels. Smaller step = smoother track, more
+            // draw calls. 8px gives a visibly connected body while keeping a 500px
+            // slider under ~65 sprites.
+            const double step = 8.0;
+            var length = slider.Length;
+            var samples = Math.Max(2, (int)Math.Ceiling(length / step) + 1);
+            var curve = slider.Curve;
+
+            for (var i = 0; i < samples; i++)
+            {
+                var progress = Math.Min(i * step, length);
+                var playfieldPos = curve.PositionAtDistance(progress) + slider.StackOffset;
+                var storyboardPos = playfieldPos + OsuHitObject.PlayfieldToStoryboardOffset;
+                var screenPos = storyboardToScreen(storyboardPos, storyboardScale, centerX, boundsTop);
+
+                renderer.Draw(hitcircle,
+                    screenPos.X, screenPos.Y,
+                    hitcircle.Width * 0.5f, hitcircle.Height * 0.5f,
+                    objectDrawScale, objectDrawScale, 0, trackTint);
+            }
+        }
+
+        // One arrow per pending repeat. Stable shows the next-upcoming arrow only —
+        // when a repeat is consumed it vanishes and the next (if any) appears. We
+        // preserve that by checking whether each repeat node is still in the future.
+        private void drawReverseArrows(QuadRenderer renderer, OsuSlider slider, double time,
+            float objectDrawScale, float alpha, float storyboardScale, float centerX, float boundsTop)
+        {
+            if (slider.RepeatCount <= 0) return;
+
+            var arrow = skinTextures.Get("reversearrow");
+            if (arrow == null) return;
+
+            var nodes = slider.Nodes as System.Collections.Generic.IList<OsuSliderNode>;
+            if (nodes == null) return;
+
+            var tint = new Color4(1f, 1f, 1f, alpha);
+
+            // Precompute tangent angles at both ends so we can rotate the arrow to
+            // point into the slider rather than out of it.
+            var tangentHead = curveTangent(slider, 0.0, 4.0);
+            var tangentTail = curveTangent(slider, slider.Length, -4.0);
+
+            // nodes[0] is head (StartTime), nodes[NodeCount-1] is the final travel end.
+            // Repeat markers sit at indices 1..NodeCount-2.
+            for (var i = 1; i < nodes.Count - 1; i++)
+            {
+                if (nodes[i].Time <= time) continue;
+
+                // Even i means arrow is at the tail (ball about to bounce back to head);
+                // odd i means arrow is at the head (ball about to bounce toward tail).
+                var atTail = i % 2 == 1;
+                var playfield = atTail
+                    ? slider.PlayfieldTipPosition + slider.StackOffset
+                    : slider.PlayfieldPosition + slider.StackOffset;
+                var tangent = atTail ? -tangentTail : -tangentHead;
+                var rotation = (float)Math.Atan2(tangent.Y, tangent.X);
+
+                var storyboardPos = playfield + OsuHitObject.PlayfieldToStoryboardOffset;
+                var screenPos = storyboardToScreen(storyboardPos, storyboardScale, centerX, boundsTop);
+
+                renderer.Draw(arrow,
+                    screenPos.X, screenPos.Y,
+                    arrow.Width * 0.5f, arrow.Height * 0.5f,
+                    objectDrawScale, objectDrawScale, rotation, tint);
+            }
+        }
+
+        private static Vector2 curveTangent(OsuSlider slider, double atDistance, double probe)
+        {
+            // Sample two curve points a few osu!pixels apart and return the direction
+            // vector between them. Negative probe samples backward, used for the tail
+            // so the direction points back into the slider body.
+            var clampedA = Math.Max(0, Math.Min(slider.Length, atDistance));
+            var clampedB = Math.Max(0, Math.Min(slider.Length, atDistance + probe));
+            var a = slider.Curve.PositionAtDistance(clampedA);
+            var b = slider.Curve.PositionAtDistance(clampedB);
+            var dir = b - a;
+            if (dir.LengthSquared < 0.0001f) return new Vector2(1f, 0f);
+            dir.Normalize();
+            return dir;
         }
 
         private void drawCircle(QuadRenderer renderer, OsuHitObject h, Vector2 screenPos, float objectDrawScale,
@@ -259,6 +434,28 @@ namespace StorybrewEditor.UserInterface
             drawSpinnerPart(renderer, "spinner-top",    screenPos, spinnerScale, rotation, tint);
             drawSpinnerPart(renderer, "spinner-middle2", screenPos, spinnerScale, rotation * 1.5f, tint);
             drawSpinnerPart(renderer, "spinner-middle", screenPos, spinnerScale, 0, tint);
+
+            // Approach circle shrinks from full playfield-height to 0 across the
+            // spinner's duration. Many skins hide it (fully transparent texture);
+            // in that case Get() returns a normal texture but the tint stays
+            // whatever the PNG was authored with, so it reads as invisible.
+            var approach = skinTextures.Get("spinner-approachcircle");
+            if (approach != null)
+            {
+                var duration = spinner.EndTime - spinner.StartTime;
+                if (duration > 0)
+                {
+                    var progress = (float)((time - spinner.StartTime) / duration);
+                    progress = Math.Max(0f, Math.Min(1f, progress));
+                    var approachScale = spinnerScale * (1f - progress) * 4f;
+                    if (approachScale > 0f)
+                    {
+                        renderer.Draw(approach, screenPos.X, screenPos.Y,
+                            approach.Width * 0.5f, approach.Height * 0.5f,
+                            approachScale, approachScale, 0, tint);
+                    }
+                }
+            }
         }
 
         private void drawSpinnerPart(QuadRenderer renderer, string name, Vector2 screenPos, float drawScale, float rotation, Color4 color)
