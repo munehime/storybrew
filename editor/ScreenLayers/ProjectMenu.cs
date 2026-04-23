@@ -43,6 +43,7 @@ namespace StorybrewEditor.ScreenLayers
         private Button gameplayBorderButton;
         private GameplayBorderOverlay gameplayBorderOverlay;
         private Button hitObjectsButton;
+        private HitObjectPreviewLayer hitObjectPreview;
 
         // Vertical space reserved above bottomRightLayout for the icon column(s) stacked on
         // top of the main row (hitObjectsButton above gameplayBorderButton above hideUiButton).
@@ -153,6 +154,13 @@ namespace StorybrewEditor.ScreenLayers
                 AnchorTo = BoxAlignment.Centre,
             });
             mainStoryboardContainer.Add(gameplayBorderOverlay = new GameplayBorderOverlay(WidgetManager)
+            {
+                AnchorTarget = mainStoryboardContainer,
+                AnchorFrom = BoxAlignment.Centre,
+                AnchorTo = BoxAlignment.Centre,
+                Displayed = false,
+            });
+            mainStoryboardContainer.Add(hitObjectPreview = new HitObjectPreviewLayer(WidgetManager, project)
             {
                 AnchorTarget = mainStoryboardContainer,
                 AnchorFrom = BoxAlignment.Centre,
@@ -1150,8 +1158,10 @@ namespace StorybrewEditor.ScreenLayers
 
         #region Hit object preview
 
-        // Phase A plumbing: the button reflects the setting and tooltip surfaces the current
-        // skin folder state. Rendering the hit objects themselves is Phase B.
+        // Drives both the button state and the preview layer. Two setting changes
+        // flow through here: ShowHitObjects (user-toggle) and HitObjectSkinPath
+        // (set from AppearancePopup). The layer's SetSkinFolder is a no-op when
+        // the path didn't change, so hitting this every toggle is cheap.
         private void applyHitObjectsToggle()
         {
             var enabled = (bool)Program.Settings.ShowHitObjects;
@@ -1159,6 +1169,10 @@ namespace StorybrewEditor.ScreenLayers
             var hasSkin = !string.IsNullOrEmpty(skinPath) && Directory.Exists(skinPath);
 
             hitObjectsButton.Checked = enabled;
+
+            hitObjectPreview?.SetSkinFolder(hasSkin ? skinPath : null);
+            if (hitObjectPreview != null)
+                hitObjectPreview.Displayed = enabled && hasSkin;
 
             if (!hasSkin)
             {
