@@ -304,10 +304,20 @@ namespace StorybrewEditor.UserInterface
             // their junction, leaving visible seams across the slider body on
             // curved sections. The bisector normal scaled by 1/cos(halfAngle)
             // keeps the strip width constant along curves; we clamp the cosine to
-            // avoid arbitrarily long miter spikes at very sharp angles.
+            // avoid arbitrarily long miter spikes at very sharp angles. Clamped
+            // corners are remembered so we can drop a cap disc at each — without
+            // that the inner-curve pinch would be visible as a notch.
             var normals = new Vector2[samples];
+            var sharpCorners = (System.Collections.Generic.List<int>)null;
             for (var i = 0; i < samples; i++)
-                normals[i] = computeMiterNormal(points, i);
+            {
+                normals[i] = computeMiterNormal(points, i, out var clamped);
+                if (clamped)
+                {
+                    if (sharpCorners == null) sharpCorners = new System.Collections.Generic.List<int>();
+                    sharpCorners.Add(i);
+                }
+            }
 
             for (var i = 0; i < samples - 1; i++)
             {
@@ -316,12 +326,13 @@ namespace StorybrewEditor.UserInterface
                 drawStripSegment(renderer, points[i], points[i + 1], normals[i], normals[i + 1], radius, color);
             }
 
-            // Caps fill the two end disks so the strip's square ends are hidden.
-            // Intermediate caps at each sample would smooth outer-curve gaps too,
-            // but the strip spacing is tight enough (4px) that they're imperceptible
-            // except on very high-curvature sliders.
+            // Endpoint caps hide the strip's square edges. Extra caps at clamped
+            // corners hide the pinch introduced when miter correction was skipped.
             drawSliderCap(renderer, points[0], radius, color);
             drawSliderCap(renderer, points[samples - 1], radius, color);
+            if (sharpCorners != null)
+                foreach (var idx in sharpCorners)
+                    drawSliderCap(renderer, points[idx], radius, color);
         }
 
         private void drawStripSegment(QuadRenderer renderer, Vector2 p0, Vector2 p1, Vector2 n0, Vector2 n1, float halfWidth, Color4 color)
@@ -370,20 +381,23 @@ namespace StorybrewEditor.UserInterface
 
         // Miter normal for sample point `i`. Interior points use the bisector of
         // the incoming and outgoing tangent directions scaled by 1/cos(halfAngle)
-        // so that the strip's two sides stay at constant distance from the curve.
+        // so the strip's two sides stay at constant distance from the curve.
         // Endpoints degenerate to the adjacent segment's perpendicular normal.
-        // Miter length clamped at 1 / MinCosHalfAngle to avoid spike artifacts on
-        // very sharp bends (kick-slider tips); past that threshold we fall back
-        // to the un-scaled bisector, which pinches slightly but never spikes.
-        private const float MinCosHalfAngle = 0.2f;
+        //
+        // Miter length is clamped at bends sharper than MinCosHalfAngle; without
+        // this a near-reversing kick-slider produces a spike extending many times
+        // the slider's width away from the curve. At clamped bends the caller
+        // draws an extra cap at the sample point to hide the pinch.
+        private const float MinCosHalfAngle = 0.5f; // 120° full-angle threshold
 
-        private static Vector2 computeMiterNormal(Vector2[] points, int i)
+        private static Vector2 computeMiterNormal(Vector2[] points, int i, out bool clamped)
         {
+            clamped = false;
             var count = points.Length;
             if (count < 2) return new Vector2(0, 1);
 
             Vector2 tangent;
-            Vector2 tIn = Vector2.Zero, tOut = Vector2.Zero;
+            Vector2 tIn = Vector2.Zero;
 
             if (i == 0)
             {
@@ -396,7 +410,7 @@ namespace StorybrewEditor.UserInterface
             else
             {
                 tIn = points[i] - points[i - 1];
-                tOut = points[i + 1] - points[i];
+                var tOut = points[i + 1] - points[i];
                 if (tIn.LengthSquared > 0.0001f) tIn.Normalize();
                 if (tOut.LengthSquared > 0.0001f) tOut.Normalize();
                 tangent = tIn + tOut;
@@ -404,17 +418,15 @@ namespace StorybrewEditor.UserInterface
             if (tangent.LengthSquared > 0.0001f) tangent.Normalize();
             else tangent = new Vector2(1, 0);
 
-            // Normal is the 90° CCW rotation of the tangent.
             var normal = new Vector2(-tangent.Y, tangent.X);
 
-            // Miter-length correction — keep the strip's perpendicular width constant
-            // even when the curve bends. Skip at endpoints (no correction needed) and
-            // at sharp bends where the correction would spike.
             if (i > 0 && i < count - 1)
             {
                 var cosHalf = Vector2.Dot(tIn, tangent);
                 if (cosHalf > MinCosHalfAngle)
                     normal /= cosHalf;
+                else
+                    clamped = true; // caller should draw a cap here to hide the pinch
             }
             return normal;
         }
@@ -475,10 +487,16 @@ namespace StorybrewEditor.UserInterface
             //   0.60–0.80  track → border gradient
             //   0.80–0.95  pure border band
             //   0.95–1.00  border fading to transparent (edge AA)
+            // Baked alpha stays at 1.0 across track + border so the body fades in
+            // lockstep with the hit circles during the post-EndTime fadeout. The
+            // previous 0.9 track alpha (intended for a slight background bleed)
+            // caused the body to appear to fade faster than the head/tail circles
+            // because 0.9 * tintAlpha looks visibly dimmer than 1.0 * tintAlpha
+            // when tintAlpha drops below ~0.5.
             float r, g, b, a;
             if (edge < 0.60f)
             {
-                r = trackColor.R; g = trackColor.G; b = trackColor.B; a = 0.9f;
+                r = trackColor.R; g = trackColor.G; b = trackColor.B; a = 1f;
             }
             else if (edge < 0.80f)
             {
@@ -486,7 +504,7 @@ namespace StorybrewEditor.UserInterface
                 r = lerp(trackColor.R, borderColor.R, t);
                 g = lerp(trackColor.G, borderColor.G, t);
                 b = lerp(trackColor.B, borderColor.B, t);
-                a = lerp(0.9f, 1f, t);
+                a = 1f;
             }
             else if (edge < 0.95f)
             {
