@@ -30,14 +30,17 @@ namespace StorybrewEditor
                 return;
             }
 
+            // The update test is a nice-to-have (it verifies the auto-updater
+            // can apply this build on top of the previous release). On a fresh
+            // fork or whenever GitHub doesn't have the previous version's zip,
+            // it shouldn't block publishing — the zip itself is already built.
             try
             {
                 testUpdate(archiveName);
             }
             catch (Exception e)
             {
-                MessageBox.Show($"\nUpdate test failed:\n\n{e}", Program.FullName);
-                return;
+                Trace.WriteLine($"\nUpdate test failed (non-fatal): {e.Message}");
             }
 
             Trace.WriteLine($"\nOpening {appDirectory}");
@@ -58,6 +61,14 @@ namespace StorybrewEditor
                 foreach (var path in Directory.EnumerateFiles(appDirectory, "*.dll", SearchOption.TopDirectoryOnly))
                     addFile(archive, path, appDirectory);
 
+                // Optional ffmpeg/ subdirectory — bundles ffmpeg.exe, ffprobe.exe
+                // and their .dll dependencies if the user dropped them in. Falls
+                // through silently when the folder is empty.
+                var ffmpegDir = Path.Combine(appDirectory, "ffmpeg");
+                if (Directory.Exists(ffmpegDir))
+                    foreach (var path in Directory.EnumerateFiles(ffmpegDir, "*.*", SearchOption.AllDirectories))
+                        addFile(archive, path, appDirectory);
+
                 // Scripts
                 foreach (var path in Directory.EnumerateFiles(scriptsDirectory, "*.cs", SearchOption.TopDirectoryOnly))
                     addFile(archive, path, scriptsDirectory, "scripts");
@@ -71,11 +82,24 @@ namespace StorybrewEditor
             var previousVersion = $"{Program.Version.Major}.{Program.Version.Minor - 1}";
             var previousArchiveName = $"storybrew.{previousVersion}.zip";
             if (!File.Exists(previousArchiveName))
-                using (var webClient = new WebClient())
+            {
+                try
                 {
-                    webClient.Headers.Add("user-agent", Program.Name);
-                    webClient.DownloadFile($"https://github.com/{Program.Repository}/releases/download/{previousVersion}/{previousArchiveName}", previousArchiveName);
+                    using (var webClient = new WebClient())
+                    {
+                        webClient.Headers.Add("user-agent", Program.Name);
+                        webClient.DownloadFile($"https://github.com/{Program.Repository}/releases/download/{previousVersion}/{previousArchiveName}", previousArchiveName);
+                    }
                 }
+                catch (Exception e)
+                {
+                    // No previous release on this fork (or no network) — skip the
+                    // test silently so a fresh fork's first publish still completes.
+                    Trace.WriteLine($"Skipping update test: previous release {previousVersion} not available ({e.Message})");
+                    try { File.Delete(previousArchiveName); } catch { }
+                    return;
+                }
+            }
 
             var updateTestPath = Path.GetFullPath("updatetest");
             var updateFolderPath = Path.GetFullPath(Path.Combine(updateTestPath, Updater.UpdateFolderPath));

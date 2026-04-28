@@ -25,7 +25,7 @@ namespace StorybrewEditor
     class Program
     {
         public const string Name = "storybrew editor";
-        public const string Repository = "Damnae/storybrew";
+        public const string Repository = "munehime/storybrew";
         public static Version Version => Assembly.GetExecutingAssembly().GetName().Version;
         public static string FullName => $"{Name} {Version} ({Repository})";
         public static string DiscordUrl = $"https://discord.gg/0qfFOucX93QDNVN7";

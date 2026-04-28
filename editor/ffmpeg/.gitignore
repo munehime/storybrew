@@ -1,0 +1,6 @@
+# Don't commit the binaries themselves — they're large, proprietary-licensed,
+# and platform-specific. The folder is committed (this .gitignore + README)
+# so the build can pick up locally-dropped binaries.
+*
+!.gitignore
+!README.md

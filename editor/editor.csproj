@@ -28,6 +28,20 @@
     <None Remove="Resources\ui-stripes-opt.json" />
   </ItemGroup>
 
+  <!--
+    Optional ffmpeg redistributable. If the user drops ffmpeg.exe, ffprobe.exe
+    and their .dll dependencies into editor/ffmpeg/, they'll be copied to the
+    build output and bundled into the published zip via Builder.cs. The folder
+    contents themselves are .gitignore'd because of LGPL redistribution
+    nuance — bundling vs. shipping in source are different beasts.
+  -->
+  <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)\ffmpeg')">
+    <Content Include="ffmpeg\**\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>ffmpeg\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </Content>
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.Common" Version="4.11.0" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
