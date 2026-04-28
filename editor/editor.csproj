@@ -68,4 +68,31 @@
     <Exec Command="cd &quot;$(OutDir)&quot; &amp;&amp; &quot;$(TargetName).exe&quot; build" />
   </Target>
 
+  <!--
+    Sync the brewlib submodule before each build so the parent repo's recorded
+    submodule SHA matches what's checked out on disk. Without this, switching
+    branches or pulling new commits can leave brewlib pinned to its previous
+    SHA, which is how the x86 bass.dll keeps coming back to bite us
+    (BadImageFormatException at startup because the x64 exe loads a 32-bit DLL).
+
+    ContinueOnError swallows failures from missing git, no network, dirty
+    submodule, etc., so this never blocks a build. Set <SkipSubmoduleSync>true
+    to opt out entirely (e.g., offline CI builds).
+  -->
+  <Target Name="EnsureSubmodulesUpToDate" BeforeTargets="PrepareForBuild"
+          Condition="'$(SkipSubmoduleSync)' != 'true'">
+    <Exec Command="git submodule sync --recursive"
+          WorkingDirectory="$(MSBuildProjectDirectory)\.."
+          ContinueOnError="true"
+          IgnoreExitCode="true"
+          StandardOutputImportance="low"
+          StandardErrorImportance="low" />
+    <Exec Command="git submodule update --init --recursive"
+          WorkingDirectory="$(MSBuildProjectDirectory)\.."
+          ContinueOnError="true"
+          IgnoreExitCode="true"
+          StandardOutputImportance="low"
+          StandardErrorImportance="low" />
+  </Target>
+
 </Project>
