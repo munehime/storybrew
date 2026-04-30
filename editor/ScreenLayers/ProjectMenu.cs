@@ -1280,6 +1280,8 @@ namespace StorybrewEditor.ScreenLayers
             uiHidden = true;
             bottomLeftLayout.Displayed = false;
             bottomRightLayout.Displayed = false;
+            gameplayBorderButton.Displayed = false;
+            hitObjectsButton.Displayed = false;
             effectsListPanel.Hide();
             layersListPanel.Hide();
             settingsMenuPanel.Hide();
@@ -1294,6 +1296,8 @@ namespace StorybrewEditor.ScreenLayers
             uiHidden = false;
             bottomLeftLayout.Displayed = true;
             bottomRightLayout.Displayed = true;
+            gameplayBorderButton.Displayed = true;
+            hitObjectsButton.Displayed = true;
             effectsListPanel.SetShown(effectsButton.Checked);
             layersListPanel.SetShown(layersButton.Checked);
             settingsMenuPanel.SetShown(settingsButton.Checked);
@@ -1313,6 +1317,8 @@ namespace StorybrewEditor.ScreenLayers
             {
                 bottomLeftLayout.Displayed = false;
                 bottomRightLayout.Displayed = false;
+                gameplayBorderButton.Displayed = false;
+                hitObjectsButton.Displayed = false;
                 effectsListPanel.ForceHide();
                 layersListPanel.ForceHide();
                 settingsMenuPanel.ForceHide();
@@ -1353,6 +1359,8 @@ namespace StorybrewEditor.ScreenLayers
 
                 bottomLeftLayout.Displayed = false;
                 bottomRightLayout.Displayed = false;
+                gameplayBorderButton.Displayed = false;
+                hitObjectsButton.Displayed = false;
                 effectsListPanel.ForceHide();
                 layersListPanel.ForceHide();
                 settingsMenuPanel.ForceHide();
@@ -1368,6 +1376,8 @@ namespace StorybrewEditor.ScreenLayers
                 {
                     bottomLeftLayout.Displayed = true;
                     bottomRightLayout.Displayed = true;
+                    gameplayBorderButton.Displayed = true;
+                    hitObjectsButton.Displayed = true;
                     if (effectsButton.Checked) effectsListPanel.ForceShow();
                     if (layersButton.Checked) layersListPanel.ForceShow();
                     if (settingsButton.Checked) settingsMenuPanel.ForceShow();
