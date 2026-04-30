@@ -150,7 +150,7 @@ namespace StorybrewEditor.UserInterface
             // meant for the common CS 3-7 range where it produces visually matched sizes
             // against the Argon reference. Callers using maps with CS >= 7.5 should
             // expect flipped sprites until this curve is revisited.
-            var csMultiplier = 0.5f - 1f * ((float)beatmap.CircleSize - 5f) / 5f;
+            var csMultiplier = 0.4f - 1f * ((float)beatmap.CircleSize - 5f) / 5f;
             var objectDrawScale = csMultiplier * storyboardScale / skinTextures.Scale;
 
             var renderer = DrawState.Prepare(drawContext.Get<QuadRenderer>(), Manager.Camera, renderStates);
